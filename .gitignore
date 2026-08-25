@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environment
+.env
+.env.local
+
+# Local database
+*.db
+*.sqlite
+*.sqlite3
+
+# Generated artifacts — regenerate, don't commit
+artifacts/
+reports/*.json
+
+# Real datasets — download scripts + checksums only, never the data
+data/real/
+*.csv
+*.parquet
+
+# OS
+.DS_Store
