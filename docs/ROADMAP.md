@@ -1,4 +1,4 @@
-# Tyche v2 — Build Roadmap
+# Veyra v2 — Build Roadmap
 
 **Source of truth:** `Tyche_Fraud_Spike_Deep_Problem_Research.md`
 **Status:** proposed, not yet started
@@ -99,7 +99,7 @@ git init && git add -A && git commit -m "v1 baseline before fraud-spike pivot"
 git checkout -b v2-fraud-spike
 ```
 
-Commit `tyche.db`? No — add to `.gitignore` along with `.venv/`, `artifacts/`, `reports/*.json`. Tag the v1 commit `v1-agent-commerce` so the old evaluation stays reproducible and citable as prior work.
+Commit `veyra.db`? No — add to `.gitignore` along with `.venv/`, `artifacts/`, `reports/*.json`. Tag the v1 commit `v1-agent-commerce` so the old evaluation stays reproducible and citable as prior work.
 
 ### 1.2 Test harness before anything else
 
@@ -260,7 +260,7 @@ Three detectors, all tuned properly (§26). A strawman baseline is worse than no
 
 **Baseline B — contextual ML.** Gradient boosting on families A–I. No relationship features, no cross-merchant. This is the honest strong baseline.
 
-**Baseline C — Tyche.** B + relationship/graph features + multi-window fusion + cost-sensitive decisioning.
+**Baseline C — Veyra.** B + relationship/graph features + multi-window fusion + cost-sensitive decisioning.
 
 **The experiment the whole project exists to answer:** does C beat B by enough to justify the relationship engine? Run the ablation and report it truthfully. If it does not, that is a finding worth presenting — and far better than a fabricated margin.
 
@@ -331,7 +331,7 @@ This is the direct answer to §13 and to v1's 0.994.
 | **G3** | Predict generator knobs from feature vector | no label-determining parameter recoverable at R² > 0.8 |
 | **G4** | Split integrity | no merchant-window crosses splits; baselines provably fit on train period only |
 | **G5** | **Leave-one-scenario-out** — train with `card_testing` entirely absent, test on it | recall > 0.5 → else the model memorises families rather than learning abnormality |
-| **G6** | **Cross-generator** — train on Tyche generator, test on PaySim/Sparkov lifted windows | report the PR-AUC drop; large drop = generator overfit |
+| **G6** | **Cross-generator** — train on Veyra generator, test on PaySim/Sparkov lifted windows | report the PR-AUC drop; large drop = generator overfit |
 
 **G5 is the most valuable single test in the project.** A real attacker does not use a technique from your training set. LOSO recall is the closest honest proxy for "would this catch something new", and reporting it — even at a mediocre value — demonstrates more understanding than any headline F1.
 
@@ -380,7 +380,7 @@ This is the phase that separates the project from every other buildathon submiss
 
 No public dataset carries incident-level fraud-spike labels. Every one below needs the Phase 2.3 label-lifting rule applied. Being explicit about that limitation is part of the result.
 
-| Dataset | Real? | Time | Merchant | Entity/device | Label | Role in Tyche |
+| Dataset | Real? | Time | Merchant | Entity/device | Label | Role in Veyra |
 |---|---|---|---|---|---|---|
 | **IEEE-CIS (Vesta)** | **Real** | `TransactionDT` (sec offset) | none — use `ProductCD`+`addr1`+`card4` as segment | `DeviceInfo`, `DeviceType`, `id_12`–`id_38`, `card1`–`card6` | `isFraud` | **Primary real benchmark.** Real device-reuse and instrument structure — the only public real set with genuine relationship signal |
 | **TalkingData AdTracking** | **Real** | `click_time` | `app`/`channel` | `ip`, `device`, `os` | `is_attributed` | **Velocity + relationship stress test at scale** (~185M rows). Click fraud, not payments — but real bot-farm burst structure |
@@ -389,7 +389,7 @@ No public dataset carries incident-level fraud-spike labels. Every one below nee
 | **BankSim** | Synthetic | step | yes | customer, category | `fraud` | Small third-party generator, quick sanity check |
 | **ULB creditcard.csv** | Real but PCA'd | `Time` only | none | none | `Class` | **Weak** — temporal burst sanity only. No relationship features survive PCA |
 
-**IEEE-CIS is the one to invest in.** Concretely: sort by `TransactionDT`; define pseudo-merchant segments as `(ProductCD, addr1)`; build 1m/5m/15m/1h windows per segment; apply label lifting; and check whether Tyche's *relationship* features — device reuse, instrument cardinality growth, degree concentration — carry real signal on real fraud. If they do, that is the strongest claim the project can make.
+**IEEE-CIS is the one to invest in.** Concretely: sort by `TransactionDT`; define pseudo-merchant segments as `(ProductCD, addr1)`; build 1m/5m/15m/1h windows per segment; apply label lifting; and check whether Veyra's *relationship* features — device reuse, instrument cardinality growth, degree concentration — carry real signal on real fraud. If they do, that is the strongest claim the project can make.
 
 Licensing is not optional housekeeping: Kaggle competition data generally requires accepting competition rules, IEEE-CIS is research/non-commercial, and none of it should be redistributed in the repo. Ship **download scripts plus checksums**, not data. Cite every source in the report.
 
@@ -411,7 +411,7 @@ Parameterise each attack with an evasion knob and sweep it until detection fails
 | E8 | Cross-merchant fan-out | spread over N merchants, stay under each threshold | **only** cross-merchant features catch this |
 | E9 | Cover traffic | run the attack *during* a flash sale | everything — the hardest case |
 
-**The deliverable is a detection-floor chart per attack**: attack intensity on x, recall on y, three curves (Baseline A, Baseline B, Tyche), with the 0.5-recall crossing marked. This states plainly *where each system stops working*.
+**The deliverable is a detection-floor chart per attack**: attack intensity on x, recall on y, three curves (Baseline A, Baseline B, Veyra), with the 0.5-recall crossing marked. This states plainly *where each system stops working*.
 
 That is a far stronger result than a single F1. It says: here is what we catch, here is exactly what we miss, and here is what the relationship engine buys you. E8 in particular is what justifies cross-merchant features — nothing else detects it.
 
@@ -419,7 +419,7 @@ That is a far stronger result than a single F1. It says: here is what we catch, 
 
 Encode observable signatures from public payment-industry sources — card testing / enumeration, BIN attacks, promo and referral abuse, refund and friendly-fraud waves, COD/RTO abuse — into matrix rows, with citations. **Defensive signatures only**: what the pattern *looks like in aggregate telemetry*, never how to execute it.
 
-Cite Razorpay's own published documentation (disputes, chargeback types, refunds, security) for the loss taxonomy, and keep the §42 source discipline rigidly: separate Razorpay-published facts / external research / synthetic assumptions / Tyche's own results. Never blur them.
+Cite Razorpay's own published documentation (disputes, chargeback types, refunds, security) for the loss taxonomy, and keep the §42 source discipline rigidly: separate Razorpay-published facts / external research / synthetic assumptions / Veyra's own results. Never blur them.
 
 **Effort:** 7–9 days, and it can run in parallel with Phase 6.
 
@@ -489,7 +489,7 @@ Phase 7  Real threats/data      7–9d                              ████
 1. Phase 0 matrix (abbreviated — 10 scenarios, not 23)
 2. Phase 2 generator with anti-leakage rules
 3. Feature families A, B, C, I, J (skip E geographic, H payment-method-entropy)
-4. Baselines A and B, plus Tyche
+4. Baselines A and B, plus Veyra
 5. Leakage gates **G1, G2, G4, G5** (G5 is non-negotiable)
 6. Incident-level metrics + hard-negative FP table
 7. §27 killer experiment as the demo
@@ -505,7 +505,7 @@ Cut first: the dashboard (a notebook plus static charts is fine), the LLM explan
 
 The project is finished when it can answer, with evidence:
 
-1. Given two identical 30→500 spikes, does Tyche separate them, and *why* (§27)?
+1. Given two identical 30→500 spikes, does Veyra separate them, and *why* (§27)?
 2. What is the false-alert rate per merchant per day at the chosen operating point?
 3. What is incident recall on an attack family the model never trained on (G5)?
 4. Does the relationship engine beat contextual ML, and by how much (§26)?
@@ -513,6 +513,6 @@ The project is finished when it can answer, with evidence:
 6. Do the relationship features carry signal on **real** fraud data (7.1)?
 7. What does the merchant actually receive, and what can they do about it (§40)?
 
-And the claims stay inside §33's bounds: not "detects all fraud", not "better than Razorpay" — but *"on our held-out incident benchmark and on lifted windows from IEEE-CIS, Tyche improved incident recall over the specified baselines while reducing hard-negative false positives, and here is exactly where it fails."*
+And the claims stay inside §33's bounds: not "detects all fraud", not "better than Razorpay" — but *"on our held-out incident benchmark and on lifted windows from IEEE-CIS, Veyra improved incident recall over the specified baselines while reducing hard-negative false positives, and here is exactly where it fails."*
 
 That last clause is the one that wins.

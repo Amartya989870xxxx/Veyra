@@ -23,7 +23,7 @@ router = APIRouter(
     response_model=RiskDecisionResponse,
     summary="Evaluate a transaction and return a bounded recommendation",
     description=(
-        "Returns an evidence-backed ALLOW / REVIEW / BLOCK **recommendation**. Tyche never "
+        "Returns an evidence-backed ALLOW / REVIEW / BLOCK **recommendation**. Veyra never "
         "executes a financial action; the decision is advisory and the deterministic policy "
         "engine, not any model, decides it.\n\n"
         "Component scores are returned uncombined alongside the fused score. A `null` "

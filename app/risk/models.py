@@ -164,7 +164,7 @@ def out_of_fold_scores(
 
 @dataclass
 class ModelBundle:
-    """Everything needed to reproduce a Tyche score: components, fusion, baselines, versions."""
+    """Everything needed to reproduce a Veyra score: components, fusion, baselines, versions."""
 
     components: dict[str, ComponentModel] = field(default_factory=dict)
     fusion: FusionModel | None = None

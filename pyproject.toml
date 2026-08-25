@@ -1,7 +1,7 @@
 [project]
-name = "tyche"
+name = "veyra"
 version = "0.1.0"
-description = "Tyche - agent-aware AI risk manager for agentic commerce (research prototype)"
+description = "Veyra - incident-level fraud spike intelligence for merchants (research prototype)"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

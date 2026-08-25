@@ -19,7 +19,7 @@ async def health() -> dict:
     make the process look dead to an orchestrator."""
     return {
         "status": "ok",
-        "service": "tyche",
+        "service": "veyra",
         "version": APP_VERSION,
         "schema_version": SCHEMA_VERSION,
     }
@@ -29,7 +29,7 @@ async def health() -> dict:
 async def ready() -> dict:
     """Readiness, with each dependency reported separately.
 
-    Redis being down is *degraded*, not unready: Tyche is designed to keep deciding without
+    Redis being down is *degraded*, not unready: Veyra is designed to keep deciding without
     it. The database being down is unready, because a decision that cannot be persisted
     cannot be audited.
     """

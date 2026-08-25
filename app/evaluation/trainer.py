@@ -1,4 +1,4 @@
-"""Training pipeline for the Tyche model bundle.
+"""Training pipeline for the Veyra model bundle.
 
 Protocol, in order, and the reason for each step:
 

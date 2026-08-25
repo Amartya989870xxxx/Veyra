@@ -2,7 +2,7 @@
 
 These are the features a conventional, agent-unaware payment risk model would have. They
 form the ``txn_ml`` baseline on their own, which is what makes the central experiment a
-clean ablation: Tyche is these features *plus* behaviour, authorization, graph and
+clean ablation: Veyra is these features *plus* behaviour, authorization, graph and
 temporal signals.
 """
 

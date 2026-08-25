@@ -24,7 +24,7 @@ from data.generators.synthetic import (  # noqa: E402
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Generate the Tyche synthetic benchmark")
+    parser = argparse.ArgumentParser(description="Generate the Veyra synthetic benchmark")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--transactions", type=int, default=None,

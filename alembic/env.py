@@ -1,4 +1,4 @@
-"""Alembic environment. Reads the database URL from Tyche settings, not alembic.ini."""
+"""Alembic environment. Reads the database URL from Veyra settings, not alembic.ini."""
 
 from __future__ import annotations
 

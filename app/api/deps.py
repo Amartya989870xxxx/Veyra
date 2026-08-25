@@ -119,7 +119,7 @@ async def rate_limit(request: Request, settings: Settings = Depends(get_settings
     if settings.rate_limit_per_minute <= 0:
         return
     client = request.client.host if request.client else "unknown"
-    key = f"tyche:ratelimit:{client}"
+    key = f"veyra:ratelimit:{client}"
     count, degraded = await get_hot_state().incr_window(key, 60)
     if degraded:
         log.debug("rate_limit_degraded", extra={"client": client})

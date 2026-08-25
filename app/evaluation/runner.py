@@ -12,7 +12,7 @@ Protocol, and the discipline behind it:
 
 The holdout is passed to a tuner at no point in this file. Every detector — including both
 baselines — gets its own tuned operating point, so the comparison is between well-configured
-systems rather than between Tyche and a strawman.
+systems rather than between Veyra and a strawman.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from app.core.config import get_settings
 from app.core.ids import run_id as new_run_id
 from app.core.logging import get_logger
 from app.evaluation.dataset import Dataset, SplitResult, load_dataset, split_dataset
-from app.evaluation.detectors import RulesDetector, TransactionMLDetector, TycheDetector
+from app.evaluation.detectors import RulesDetector, TransactionMLDetector, VeyraDetector
 from app.evaluation.metrics import (
     calibration_error,
     choose_operating_point,
@@ -202,7 +202,7 @@ def run_evaluation(
     notes: str | None = None,
 ) -> tuple[EvaluationRunResponse, ModelBundle | None, SplitResult]:
     settings = get_settings()
-    detectors = detectors or ["rules", "txn_ml", "tyche"]
+    detectors = detectors or ["rules", "txn_ml", "veyra"]
     cost_model = cost_model or cost_model_from_settings(settings)
     run_id = new_run_id()
     started_at = datetime.now(timezone.utc)
@@ -222,7 +222,7 @@ def run_evaluation(
     train, validation, holdout = parts["train"], parts["validation"], parts["holdout"]
 
     bundle: ModelBundle | None = None
-    if "tyche" in detectors or "txn_ml" in detectors:
+    if "veyra" in detectors or "txn_ml" in detectors:
         bundle = train_bundle(train, seed=seed, dataset_id=dataset.dataset_id)
 
     latency_p50 = float(np.percentile(frame.latency_ms, 50)) if frame.latency_ms else None
@@ -233,8 +233,8 @@ def run_evaluation(
         scorers["rules"] = RulesDetector()
     if "txn_ml" in detectors and bundle is not None:
         scorers["txn_ml"] = TransactionMLDetector(model=bundle.baseline_txn_only)
-    if "tyche" in detectors and bundle is not None:
-        scorers["tyche"] = TycheDetector(bundle)
+    if "veyra" in detectors and bundle is not None:
+        scorers["veyra"] = VeyraDetector(bundle)
 
     results: list[DetectorResult] = []
     sweeps: dict[str, list[ThresholdPoint]] = {}
@@ -246,8 +246,8 @@ def run_evaluation(
         holdout_scores = detector.score(holdout)
         val_result, holdout_result, sweep, extra = _evaluate_detector(
             name, validation, holdout, val_scores, holdout_scores, cost_model,
-            latency_p50 if name == "tyche" else None,
-            latency_p95 if name == "tyche" else None,
+            latency_p50 if name == "veyra" else None,
+            latency_p95 if name == "veyra" else None,
         )
         results.extend([val_result, holdout_result])
         sweeps[name] = sweep
@@ -265,8 +265,8 @@ def run_evaluation(
 
     if bundle is not None:
         bundle.thresholds = {
-            "review": chosen_thresholds.get("tyche", {}).get("review", 0.45),
-            "block": chosen_thresholds.get("tyche", {}).get("block", 0.75),
+            "review": chosen_thresholds.get("veyra", {}).get("review", 0.45),
+            "block": chosen_thresholds.get("veyra", {}).get("block", 0.75),
         }
         bundle.save(model_dir or settings.model_dir)
         baselines.save(Path(model_dir or settings.model_dir) / "baselines.json")

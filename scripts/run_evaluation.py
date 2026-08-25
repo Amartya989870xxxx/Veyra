@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the full evaluation: baselines, Tyche, threshold sweep, expected loss, report.
+"""Run the full evaluation: baselines, Veyra, threshold sweep, expected loss, report.
 
     python scripts/run_evaluation.py
     python scripts/run_evaluation.py --dataset artifacts/datasets/ds_xxx --seed 42
@@ -20,11 +20,11 @@ from app.evaluation.runner import run_evaluation, save_run  # noqa: E402
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run the Tyche evaluation pipeline")
+    parser = argparse.ArgumentParser(description="Run the Veyra evaluation pipeline")
     parser.add_argument("--dataset", default=None, help="Dataset directory")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
-        "--detectors", default="rules,txn_ml,tyche", help="Comma-separated detector names"
+        "--detectors", default="rules,txn_ml,veyra", help="Comma-separated detector names"
     )
     parser.add_argument("--report-dir", default=None)
     parser.add_argument("--model-dir", default=None)

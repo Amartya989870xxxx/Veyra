@@ -15,7 +15,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore", env_prefix="TYCHE_"
+        env_file=".env", env_file_encoding="utf-8", extra="ignore", env_prefix="VEYRA_"
     )
 
     environment: Literal["local", "test", "ci", "demo"] = "local"
@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     # --- storage -------------------------------------------------------------------
     # SQLite keeps the prototype runnable with zero infrastructure; PostgreSQL is the
     # intended system of record and is exercised by the same ORM models unchanged.
-    database_url: str = "sqlite+aiosqlite:///./tyche.db"
+    database_url: str = "sqlite+aiosqlite:///./veyra.db"
     db_echo: bool = False
     db_pool_size: int = 10
 

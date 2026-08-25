@@ -74,7 +74,7 @@ class IngestionService:
 
         key = event.idempotency_key or event.event_id
         claimed, degraded = await self.hot_state.claim_once(
-            f"tyche:dedupe:{key}", event.event_id, DEDUPE_TTL_SECONDS
+            f"veyra:dedupe:{key}", event.event_id, DEDUPE_TTL_SECONDS
         )
         if not claimed:
             # The fast path says duplicate. Confirm against the database, because a Redis

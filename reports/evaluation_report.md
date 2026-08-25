@@ -1,4 +1,4 @@
-# Tyche — Evaluation Report
+# Veyra — Evaluation Report
 
 **Run ID:** `run_01a022da1e21425b826714f979a7ad99`
 **Dataset:** `ds_dfd5b063f4e49d3c`
@@ -98,7 +98,7 @@ costs are handled in the expected-loss model rather than folded into precision.
 |---|---|---|---|---|---|---|
 | Baseline 1 — static rules | 0.348 | 0.977 | 0.513 | 0.888 | 26.2% | ₹17,100 |
 | Baseline 2 — transaction-only ML | 0.907 | 0.835 | 0.870 | 0.951 | 1.2% | ₹64,941 |
-| Tyche — full agent + campaign context | 0.994 | 0.994 | 0.994 | 0.999 | 0.1% | ₹2,807 |
+| Veyra — full agent + campaign context | 0.994 | 0.994 | 0.994 | 0.999 | 0.1% | ₹2,807 |
 
 ### Validation (used for threshold selection)
 
@@ -106,7 +106,7 @@ costs are handled in the expected-loss model rather than folded into precision.
 |---|---|---|---|---|---|---|
 | Baseline 1 — static rules | 0.414 | 0.901 | 0.568 | 0.838 | 25.2% | ₹198,253 |
 | Baseline 2 — transaction-only ML | 0.932 | 0.890 | 0.911 | 0.946 | 1.3% | ₹240,150 |
-| Tyche — full agent + campaign context | 0.985 | 0.996 | 0.991 | 1.000 | 0.3% | ₹9,819 |
+| Veyra — full agent + campaign context | 0.985 | 0.996 | 0.991 | 1.000 | 0.3% | ₹9,819 |
 
 ## 4. Decision mix and merchant cost (holdout)
 
@@ -114,7 +114,7 @@ costs are handled in the expected-loss model rather than folded into precision.
 |---|---|---|---|---|---|---|---|---|
 | Baseline 1 — static rules | 0.05 | 0.25 | 64.8% | 24.8% | 10.4% | ₹0 | ₹940,853 | ₹17,100 |
 | Baseline 2 — transaction-only ML | 0.15 | 0.85 | 88.5% | 1.6% | 9.9% | ₹0 | ₹880,013 | ₹64,941 |
-| Tyche — full agent + campaign context | 0.15 | 0.70 | 87.5% | 0.1% | 12.4% | ₹0 | ₹941,306 | ₹2,807 |
+| Veyra — full agent + campaign context | 0.15 | 0.70 | 87.5% | 0.1% | 12.4% | ₹0 | ₹941,306 | ₹2,807 |
 
 **Cost assumptions** (synthetic, configurable, not sourced industry figures):
 
@@ -144,9 +144,9 @@ here is a false positive on a paying customer.
 | Baseline 2 — transaction-only ML | hard_negatives | 370 | 12 | 3.2% |
 | Baseline 2 — transaction-only ML | legit_agent | 455 | 15 | 3.3% |
 | Baseline 2 — transaction-only ML | legit_human | 772 | 0 | 0.0% |
-| Tyche — full agent + campaign context | hard_negatives | 370 | 0 | 0.0% |
-| Tyche — full agent + campaign context | legit_agent | 455 | 1 | 0.2% |
-| Tyche — full agent + campaign context | legit_human | 772 | 0 | 0.0% |
+| Veyra — full agent + campaign context | hard_negatives | 370 | 0 | 0.0% |
+| Veyra — full agent + campaign context | legit_agent | 455 | 1 | 0.2% |
+| Veyra — full agent + campaign context | legit_human | 772 | 0 | 0.0% |
 
 ## 6. Detection on the target loss class (holdout)
 
@@ -156,8 +156,8 @@ here is a false positive on a paying customer.
 | Baseline 1 — static rules | suspicious_automation | 89 | 1.000 | 0 |
 | Baseline 2 — transaction-only ML | coordinated_abuse | 87 | 0.678 | 28 |
 | Baseline 2 — transaction-only ML | suspicious_automation | 89 | 0.989 | 1 |
-| Tyche — full agent + campaign context | coordinated_abuse | 87 | 0.989 | 1 |
-| Tyche — full agent + campaign context | suspicious_automation | 89 | 1.000 | 0 |
+| Veyra — full agent + campaign context | coordinated_abuse | 87 | 0.989 | 1 |
+| Veyra — full agent + campaign context | suspicious_automation | 89 | 1.000 | 0 |
 
 ### Campaign detection lead time
 
@@ -169,9 +169,9 @@ first flag lands.
 |---|---|---|---|---|
 | Baseline 1 — static rules | 5 | 5 | 0.0 | 0.048 |
 | Baseline 2 — transaction-only ML | 5 | 5 | 0.0 | 0.019 |
-| Tyche — full agent + campaign context | 5 | 5 | 0.0 | 0.009 |
+| Veyra — full agent + campaign context | 5 | 5 | 0.0 | 0.009 |
 
-## 7. Per-scenario behaviour — Tyche (holdout)
+## 7. Per-scenario behaviour — Veyra (holdout)
 
 | Scenario | Transactions | Ground truth | Recall | FP rate |
 |---|---|---|---|---|
@@ -233,7 +233,7 @@ Best point per block threshold. The chosen operating point minimises expected lo
 | 0.15 | 0.55 | 0.932 | 0.890 | 0.911 | 1.3% | 1.5% | ₹3,048 | ₹947,468 | ₹240,472 |
 | 0.15 | 0.60 | 0.932 | 0.890 | 0.911 | 1.3% | 1.5% | ₹3,048 | ₹947,468 | ₹240,472 |
 
-### Tyche — full agent + campaign context
+### Veyra — full agent + campaign context
 
 | Review | Block | Precision | Recall | F1 | FP rate | Review rate | Blocked legit GMV | Prevented loss | Expected loss |
 |---|---|---|---|---|---|---|---|---|---|

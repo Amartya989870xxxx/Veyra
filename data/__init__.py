@@ -1,1 +1,1 @@
-"""Synthetic benchmark generation for Tyche."""
+"""Synthetic benchmark generation for Veyra."""

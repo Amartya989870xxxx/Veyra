@@ -100,7 +100,7 @@ class EvaluationRunRequest(BaseModel):
         default=None, description="Defaults to the newest dataset in the artifact directory"
     )
     seed: int = 42
-    detectors: list[str] = Field(default_factory=lambda: ["rules", "txn_ml", "tyche"])
+    detectors: list[str] = Field(default_factory=lambda: ["rules", "txn_ml", "veyra"])
     cost_model: CostModel | None = None
     notes: str | None = Field(default=None, max_length=500)
 

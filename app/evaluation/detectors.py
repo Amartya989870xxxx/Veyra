@@ -3,10 +3,10 @@
 * ``rules``  — Baseline 1, the static rule pack (PRD §22).
 * ``txn_ml`` — Baseline 2, the same gradient-boosting estimator on **transaction features
   only**. This is the stand-in for a conventional, agent-unaware payment risk model.
-* ``tyche``  — the full system: transaction + behaviour + graph/temporal components fused
+* ``veyra``  — the full system: transaction + behaviour + graph/temporal components fused
   with deterministic intent and rule scores.
 
-``txn_ml`` and ``tyche`` share an estimator, a seed and a training split. The only thing
+``txn_ml`` and ``veyra`` share an estimator, a seed and a training split. The only thing
 that differs is the feature information available, which is what makes the comparison an
 ablation rather than a model bake-off.
 """
@@ -78,7 +78,7 @@ class RulesDetector:
 
 
 class TransactionMLDetector:
-    """Baseline 2: transaction features only, same estimator as Tyche's components."""
+    """Baseline 2: transaction features only, same estimator as Veyra's components."""
 
     name = "txn_ml"
 
@@ -95,10 +95,10 @@ class TransactionMLDetector:
         return self.model.score(frame.select(self.model.feature_names))
 
 
-class TycheDetector:
+class VeyraDetector:
     """The full system, scored exactly as the API scores it."""
 
-    name = "tyche"
+    name = "veyra"
 
     def __init__(self, bundle: ModelBundle, rule_engine: RuleEngine | None = None) -> None:
         self.bundle = bundle
@@ -145,7 +145,7 @@ __all__ = [
     "FusionModel",
     "RulesDetector",
     "TransactionMLDetector",
-    "TycheDetector",
+    "VeyraDetector",
     "component_matrix",
     "intent_deviations",
     "rule_scores",

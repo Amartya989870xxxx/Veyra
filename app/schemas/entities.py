@@ -24,11 +24,11 @@ from app.schemas.enums import (
 SYNTHETIC_ID = Field(..., min_length=1, max_length=128)
 
 
-class TycheModel(BaseModel):
+class VeyraModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, use_enum_values=False)
 
 
-class Merchant(TycheModel):
+class Merchant(VeyraModel):
     merchant_id: str = SYNTHETIC_ID
     name: str | None = Field(default=None, max_length=200)
     category: str = Field(..., max_length=64)
@@ -45,14 +45,14 @@ class Merchant(TycheModel):
     )
 
 
-class Customer(TycheModel):
+class Customer(VeyraModel):
     customer_id: str = SYNTHETIC_ID
     created_at: datetime | None = None
     home_country: str = Field(default="IN", max_length=2)
     segment: str = Field(default="retail", max_length=32)
 
 
-class Agent(TycheModel):
+class Agent(VeyraModel):
     agent_id: str = SYNTHETIC_ID
     provider: str = Field(default="synthetic", max_length=64)
     application_id: str | None = Field(default=None, max_length=128)
@@ -74,7 +74,7 @@ class Agent(TycheModel):
     )
 
 
-class AgentDelegation(TycheModel):
+class AgentDelegation(VeyraModel):
     """A customer's bounded grant of payment authority to an agent.
 
     This is the authoritative authorization record. The natural-language instruction it
@@ -131,7 +131,7 @@ class AgentDelegation(TycheModel):
     )
 
 
-class IntentContract(TycheModel):
+class IntentContract(VeyraModel):
     """Structured representation of a natural-language instruction (PRD §15).
 
     Produced either deterministically or by the semantic layer. It is compared against
@@ -149,7 +149,7 @@ class IntentContract(TycheModel):
     source_text: str | None = Field(default=None, max_length=2000)
 
 
-class AgentSession(TycheModel):
+class AgentSession(VeyraModel):
     session_id: str = SYNTHETIC_ID
     agent_id: str | None = Field(default=None, max_length=128)
     customer_id: str = SYNTHETIC_ID
@@ -160,7 +160,7 @@ class AgentSession(TycheModel):
     ended_at: datetime | None = None
 
 
-class AgentAction(TycheModel):
+class AgentAction(VeyraModel):
     action_id: str = SYNTHETIC_ID
     agent_id: str = SYNTHETIC_ID
     session_id: str = SYNTHETIC_ID
@@ -197,7 +197,7 @@ class AgentAction(TycheModel):
     )
 
 
-class Transaction(TycheModel):
+class Transaction(VeyraModel):
     """A payment attempt. Never carries card numbers, CVVs, OTPs or tokens."""
 
     transaction_id: str = SYNTHETIC_ID
@@ -251,7 +251,7 @@ class Transaction(TycheModel):
     )
 
 
-class Order(TycheModel):
+class Order(VeyraModel):
     order_id: str = SYNTHETIC_ID
     merchant_id: str = SYNTHETIC_ID
     customer_id: str = SYNTHETIC_ID
@@ -262,7 +262,7 @@ class Order(TycheModel):
     created_at: datetime
 
 
-class EntityRelationship(TycheModel):
+class EntityRelationship(VeyraModel):
     """An observed edge in the entity graph. Carries no secrets by construction."""
 
     source_type: str = Field(..., max_length=32)

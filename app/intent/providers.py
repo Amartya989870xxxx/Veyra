@@ -2,7 +2,7 @@
 
 ``NullSemanticVerifier`` is the default and is always safe: it reports the layer as
 unavailable rather than returning a fabricated verdict. The Anthropic adapter is optional
-and only ever constructed when both ``TYCHE_SEMANTIC_ENABLED`` and an API key are present.
+and only ever constructed when both ``VEYRA_SEMANTIC_ENABLED`` and an API key are present.
 """
 
 from __future__ import annotations

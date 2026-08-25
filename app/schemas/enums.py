@@ -18,7 +18,7 @@ class ActionType(StrEnum):
     """Agent action trajectory vocabulary.
 
     ``REQUEST_PAYMENT``/``RETRY_PAYMENT`` are the risk-bearing terminals; everything
-    before them forms the trajectory Tyche reasons about.
+    before them forms the trajectory Veyra reasons about.
     """
 
     SEARCH = "SEARCH"

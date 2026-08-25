@@ -1,6 +1,6 @@
 """Deterministic, human-readable synthetic identifiers.
 
-Tyche never handles real customer identity. Every ID here is a synthetic token with a
+Veyra never handles real customer identity. Every ID here is a synthetic token with a
 type prefix so that a raw log line is self-describing (``dec_...`` is a decision, and so on).
 """
 

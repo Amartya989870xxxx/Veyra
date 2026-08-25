@@ -2,8 +2,8 @@
 
 This serves two roles at once, and it is worth being explicit about both:
 
-1. **Baseline 1** in the evaluation (PRD §22) — the "static rules" detector Tyche must beat.
-2. The ``rule_violation_score`` component inside Tyche's own fusion.
+1. **Baseline 1** in the evaluation (PRD §22) — the "static rules" detector Veyra must beat.
+2. The ``rule_violation_score`` component inside Veyra's own fusion.
 
 Thresholds below are declared placeholders. They are swept on validation data by the
 evaluation runner, never hand-tuned against the holdout. Each rule carries a weight; the

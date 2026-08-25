@@ -309,9 +309,9 @@ class OnlineContextBuilder:
         readings: dict[str, float] = {}
         degraded = False
         for label, key in (
-            ("customer_60s", f"tyche:vel:cus:{transaction.customer_id}"),
-            ("device_60s", f"tyche:vel:dev:{transaction.device_id or 'none'}"),
-            ("agent_60s", f"tyche:vel:agent:{transaction.agent_id or 'none'}"),
+            ("customer_60s", f"veyra:vel:cus:{transaction.customer_id}"),
+            ("device_60s", f"veyra:vel:dev:{transaction.device_id or 'none'}"),
+            ("agent_60s", f"veyra:vel:agent:{transaction.agent_id or 'none'}"),
         ):
             count, was_degraded = await self.hot_state.incr_window(key, 60)
             readings[label] = float(count)

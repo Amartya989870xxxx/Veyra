@@ -11,7 +11,7 @@ from app.schemas.evaluation import DetectorResult, EvaluationRunResponse, Thresh
 DETECTOR_LABELS = {
     "rules": "Baseline 1 — static rules",
     "txn_ml": "Baseline 2 — transaction-only ML",
-    "tyche": "Tyche — full agent + campaign context",
+    "veyra": "Veyra — full agent + campaign context",
 }
 
 
@@ -60,7 +60,7 @@ def render_markdown(run: EvaluationRunResponse) -> str:
     sections: list[str] = []
 
     sections.append(
-        f"""# Tyche — Evaluation Report
+        f"""# Veyra — Evaluation Report
 
 **Run ID:** `{run.run_id}`
 **Dataset:** `{run.dataset_id}`
@@ -255,8 +255,8 @@ first flag lands.
     )
 
     # -- per-scenario ------------------------------------------------------------------
-    tyche_holdout = holdout.get("tyche")
-    if tyche_holdout:
+    veyra_holdout = holdout.get("veyra")
+    if veyra_holdout:
         scenario_rows = [
             [
                 s.slice_name.removeprefix("scenario:"),
@@ -265,11 +265,11 @@ first flag lands.
                 _num(s.metrics.recall) if s.metrics.support_positive else "—",
                 _pct(s.metrics.false_positive_rate) if s.metrics.support_negative else "—",
             ]
-            for s in tyche_holdout.slices
+            for s in veyra_holdout.slices
             if s.slice_name.startswith("scenario:")
         ]
         sections.append(
-            f"""## 7. Per-scenario behaviour — Tyche (holdout)
+            f"""## 7. Per-scenario behaviour — Veyra (holdout)
 
 {_table(["Scenario", "Transactions", "Ground truth", "Recall", "FP rate"], scenario_rows)}"""
         )
