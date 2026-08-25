@@ -1,0 +1,145 @@
+# Veyra — feature registry
+#
+# The vocabulary the scenario matrix is allowed to reference. Every `features:` entry in
+# matrix.yaml must resolve to an id here, and every feature implemented in code must
+# appear here. research/validate.py enforces both directions.
+#
+# Families follow the research brief §8.
+#
+# Conventions
+#   evidence_only: true    -> surfaced in incident evidence and used for exposure maths,
+#                             but deliberately NOT a model feature. Raw counts do not
+#                             transfer across merchant sizes; the C-family ratios do.
+#   downstream_only: true  -> the signal only exists AFTER the fact (disputes, RTO).
+#                             Usable as a LABEL source. Never as a real-time feature.
+#                             Enforced in code by a test, not by good intentions.
+#   deviation_twin: true   -> the engine also emits `<id>_dev`, the robust deviation of
+#                             this feature from the merchant's own baseline for the same
+#                             window size and hour-of-week. See ADR-002.
+#
+# Default windows are 1m/5m/15m/1h unless a feature states otherwise.
+
+version: 1
+default_windows: [1m, 5m, 15m, 1h]
+
+families:
+  A: {name: Temporal,       note: "When and how fast, independent of how much."}
+  B: {name: Volume,         note: "Raw counts. Evidence for humans; weak model features."}
+  C: {name: Ratios,         note: "Size-invariant. The workhorses — they transfer across merchants."}
+  D: {name: Monetary,       note: "Value distribution, not just total."}
+  E: {name: Geographic,     note: "Distributional. Never 'foreign = fraud'."}
+  F: {name: Device,         note: "Device-centric reuse and novelty."}
+  G: {name: Account,        note: "Account age, novelty, concentration."}
+  H: {name: PaymentMethod,  note: "Instrument mix and issuer structure."}
+  I: {name: Outcomes,       note: "Authorisation, refund, dispute, delivery results."}
+  J: {name: Relationship,   note: "Graph shape. The families above see rows; this one sees structure."}
+
+features:
+
+  # ---- A. Temporal ----------------------------------------------------------------
+  - {id: A.txn_rate,            family: A, deviation_twin: true,  desc: "Transactions per minute in the window."}
+  - {id: A.rate_accel,          family: A, deviation_twin: true,  desc: "Change in txn_rate against the preceding window of equal size."}
+  - {id: A.burst_duration,      family: A, deviation_twin: false, desc: "Seconds elapsed since txn_rate first exceeded baseline+3·MAD."}
+  - {id: A.interarrival_mean,   family: A, deviation_twin: true,  desc: "Mean seconds between consecutive attempts."}
+  - {id: A.interarrival_cv,     family: A, deviation_twin: true,  desc: "Coefficient of variation of inter-arrival times. Low CV = machine-regular pacing."}
+  - {id: A.interarrival_p05,    family: A, deviation_twin: false, desc: "5th percentile inter-arrival. A hard floor suggests client-side rate limiting."}
+  - {id: A.periodicity_score,   family: A, deviation_twin: false, desc: "Peak of the inter-arrival autocorrelation. Scripted traffic is periodic; humans are not."}
+  - {id: A.hour_of_week_dev,    family: A, deviation_twin: false, desc: "Deviation of current volume from this merchant's hour-of-week profile."}
+
+  # ---- B. Volume ------------------------------------------------------------------
+  - {id: B.txn_count,           family: B, deviation_twin: true,  desc: "Attempts in the window."}
+  - {id: B.success_count,       family: B, deviation_twin: true, evidence_only: true,  desc: "Authorised or captured attempts."}
+  - {id: B.failure_count,       family: B, deviation_twin: true, evidence_only: true,  desc: "Failed attempts."}
+  - {id: B.unique_customers,    family: B, deviation_twin: true, evidence_only: true,  desc: "Distinct customer ids."}
+  - {id: B.unique_instruments,  family: B, deviation_twin: true, evidence_only: true,  desc: "Distinct payment-instrument fingerprints."}
+  - {id: B.unique_devices,      family: B, deviation_twin: true, evidence_only: true,  desc: "Distinct device fingerprints."}
+  - {id: B.unique_ips,          family: B, deviation_twin: true, evidence_only: true,  desc: "Distinct network fingerprints."}
+
+  # ---- C. Ratios ------------------------------------------------------------------
+  - {id: C.failure_rate,        family: C, deviation_twin: true,  desc: "failure_count / txn_count."}
+  - {id: C.devices_per_txn,     family: C, deviation_twin: true,  desc: "unique_devices / txn_count. Falls when a few devices drive many attempts."}
+  - {id: C.accounts_per_txn,    family: C, deviation_twin: true,  desc: "unique_customers / txn_count."}
+  - {id: C.instruments_per_txn, family: C, deviation_twin: true,  desc: "unique_instruments / txn_count. Near 1.0 means every attempt uses a fresh instrument."}
+  - {id: C.ips_per_txn,         family: C, deviation_twin: true,  desc: "unique_ips / txn_count."}
+  - {id: C.instrument_novelty,  family: C, deviation_twin: true,  desc: "Share of instruments never previously seen at this merchant."}
+  - {id: C.account_novelty,     family: C, deviation_twin: true,  desc: "Share of accounts never previously seen at this merchant."}
+  - {id: C.device_novelty,      family: C, deviation_twin: true,  desc: "Share of devices never previously seen at this merchant."}
+  - {id: C.coupon_rate,         family: C, deviation_twin: true,  desc: "Share of attempts carrying a coupon."}
+  - {id: C.cod_rate,            family: C, deviation_twin: true,  desc: "Share of cash-on-delivery orders."}
+  - {id: C.international_rate,  family: C, deviation_twin: true,  desc: "Share of attempts from outside the merchant's home country."}
+  - {id: C.retry_rate,          family: C, deviation_twin: true,  desc: "Share of attempts that are retries of a prior attempt."}
+
+  # ---- D. Monetary ----------------------------------------------------------------
+  - {id: D.gmv,                 family: D, deviation_twin: true, evidence_only: true,  desc: "Sum of attempted amounts."}
+  - {id: D.amount_median,       family: D, deviation_twin: true,  desc: "Median attempted amount."}
+  - {id: D.amount_cv,           family: D, deviation_twin: true,  desc: "Coefficient of variation of amounts."}
+  - {id: D.amount_entropy,      family: D, deviation_twin: true,  desc: "Shannon entropy over binned amounts. Collapses when one value repeats."}
+  - {id: D.low_value_ratio,     family: D, deviation_twin: true,  desc: "Share of attempts below this merchant's baseline 10th percentile."}
+  - {id: D.high_value_ratio,    family: D, deviation_twin: true,  desc: "Share above this merchant's baseline 90th percentile."}
+  - {id: D.discount_to_gmv,     family: D, deviation_twin: true,  desc: "Total coupon value / GMV. The promo-abuse loss ratio."}
+
+  # ---- E. Geographic --------------------------------------------------------------
+  - {id: E.country_entropy,     family: E, deviation_twin: true,  desc: "Shannon entropy over country distribution."}
+  - {id: E.state_entropy,       family: E, deviation_twin: true,  desc: "Shannon entropy over state/region distribution."}
+  - {id: E.geo_mix_jsd,         family: E, deviation_twin: false, desc: "Jensen-Shannon divergence between the window's geo mix and the merchant's baseline mix. Already a deviation."}
+  - {id: E.new_country_count,   family: E, deviation_twin: true,  desc: "Countries seen in the window but never in this merchant's history."}
+  - {id: E.geo_gini,            family: E, deviation_twin: true,  desc: "Gini concentration over region counts. High = everything from one place."}
+  - {id: E.geo_transition_rate, family: E, deviation_twin: true,  desc: "Share of accounts transacting from a region other than their own historical mode."}
+
+  # ---- F. Device ------------------------------------------------------------------
+  - {id: F.accounts_per_device_max,  family: F, deviation_twin: true, desc: "Largest number of distinct accounts on a single device."}
+  - {id: F.accounts_per_device_mean, family: F, deviation_twin: true, desc: "Mean accounts per device."}
+  - {id: F.accounts_per_device_gini, family: F, deviation_twin: true, desc: "Gini over the accounts-per-device distribution. Separates 'one hub device' from 'uniformly shared'."}
+  - {id: F.txn_per_device_max,       family: F, deviation_twin: true, desc: "Largest number of attempts from a single device."}
+  - {id: F.instruments_per_device_max, family: F, deviation_twin: true, desc: "Largest number of distinct instruments on a single device."}
+  - {id: F.device_reuse_rate,        family: F, deviation_twin: true, desc: "Share of attempts on a device already seen in the window."}
+
+  # ---- G. Account -----------------------------------------------------------------
+  - {id: G.account_age_median,  family: G, deviation_twin: true,  desc: "Median account age in hours at attempt time."}
+  - {id: G.account_age_p10,     family: G, deviation_twin: true,  desc: "10th percentile account age. Catches a young cohort hiding behind an old median."}
+  - {id: G.new_account_rate,    family: G, deviation_twin: true,  desc: "Share of accounts created within 24h of the attempt."}
+  - {id: G.txn_per_account_max, family: G, deviation_twin: true,  desc: "Largest number of attempts from a single account."}
+  - {id: G.accounts_per_address_max, family: G, deviation_twin: true, desc: "Largest number of distinct accounts sharing one shipping address."}
+  - {id: G.account_cohort_concentration, family: G, deviation_twin: true, desc: "Share of accounts whose creation timestamps fall in the same 1h bucket."}
+
+  # ---- H. Payment method ----------------------------------------------------------
+  - {id: H.method_entropy,      family: H, deviation_twin: true,  desc: "Shannon entropy over payment-method mix."}
+  - {id: H.method_mix_jsd,      family: H, deviation_twin: false, desc: "JS divergence between the window's method mix and the merchant's baseline. Already a deviation."}
+  - {id: H.card_share,          family: H, deviation_twin: true,  desc: "Share of attempts on cards."}
+  - {id: H.issuer_country_entropy, family: H, deviation_twin: true, desc: "Entropy over instrument issuer countries."}
+  - {id: H.bin_prefix_gini,     family: H, deviation_twin: true,  desc: "Gini over hashed BIN-prefix counts. High concentration on few issuing ranges is an enumeration signature."}
+  - {id: H.instrument_repeat_rate, family: H, deviation_twin: true, desc: "Mean attempts per distinct instrument. Separates retrying a few cards from testing many."}
+
+  # ---- I. Outcomes ----------------------------------------------------------------
+  - {id: I.decline_code_entropy, family: I, deviation_twin: true, desc: "Entropy over decline reason codes."}
+  - {id: I.decline_code_top_share, family: I, deviation_twin: true, desc: "Share held by the single most common decline code. Gateway faults concentrate; issuer declines spread."}
+  - {id: I.decline_issuer_share, family: I, deviation_twin: true,  desc: "Share of failures with issuer-side codes (do-not-honour, invalid card) rather than gateway/network codes."}
+  - {id: I.refund_rate,         family: I, deviation_twin: true,  downstream_only: false,
+      desc: "Refunds initiated in the window / attempts. Refunds are observable in near-real time, unlike disputes."}
+  - {id: I.refund_latency_median, family: I, deviation_twin: true, downstream_only: false,
+      desc: "Median hours between capture and refund. Abuse refunds cluster at a characteristic delay."}
+  - {id: I.refund_cohort_concentration, family: I, deviation_twin: true, downstream_only: false,
+      desc: "Share of refunds attributable to the single largest account/device cohort."}
+  - {id: I.dispute_rate,        family: I, deviation_twin: true,  downstream_only: true,
+      desc: "LABEL ONLY. Disputes land weeks after the transaction; using this as a feature is time-travel."}
+  - {id: I.rto_rate,            family: I, deviation_twin: true,  downstream_only: true,
+      desc: "LABEL ONLY. Return-to-origin is known only after a delivery attempt."}
+  - {id: I.chargeback_rate,     family: I, deviation_twin: true,  downstream_only: true,
+      desc: "LABEL ONLY. Same reasoning as dispute_rate."}
+
+  # ---- J. Relationship / graph ----------------------------------------------------
+  - {id: J.devices_per_account_max,   family: J, deviation_twin: true, desc: "Largest number of distinct devices used by a single account."}
+  - {id: J.accounts_per_ip_max,       family: J, deviation_twin: true, desc: "Largest number of accounts sharing one network fingerprint."}
+  - {id: J.bipartite_gini,            family: J, deviation_twin: true, desc: "Gini over the account-device bipartite degree distribution. The shape, not the count."}
+  - {id: J.cluster_count,             family: J, deviation_twin: true, desc: "Connected components over the window's entity graph, above a minimum size."}
+  - {id: J.largest_cluster_size,      family: J, deviation_twin: true, desc: "Transactions in the largest connected component."}
+  - {id: J.largest_cluster_vol_share, family: J, deviation_twin: true,
+      desc: "Largest cluster's share of window volume. The feature that survives dilution — a ring inside a flash sale barely moves the window average but owns a disproportionate cluster."}
+  - {id: J.cluster_density,           family: J, deviation_twin: true, evidence_only: true, desc: "Edges per node inside the largest cluster."}
+  - {id: J.cluster_density_z,         family: J, deviation_twin: false,
+      desc: "Density of the largest cluster relative to the expected density for a cluster of its size. Controls for the fact that big clusters are denser by construction."}
+  - {id: J.entity_novelty_share,      family: J, deviation_twin: true, desc: "Share of entities in the window never seen in this merchant's history."}
+  - {id: J.cross_merchant_entities,   family: J, deviation_twin: true, desc: "Entities in this window also active at another merchant in the same window."}
+  - {id: J.cross_merchant_fanout_max, family: J, deviation_twin: true,
+      desc: "Largest number of distinct merchants touched by one entity in the window. The only feature that sees a fan-out attack staying under every per-merchant threshold."}
+  - {id: J.shared_address_clusters,   family: J, deviation_twin: true, desc: "Clusters bound together by a shared shipping address."}

@@ -1,0 +1,895 @@
+# Veyra — scenario research matrix
+#
+# The brief (§43) requires this matrix complete before implementation. It is written as
+# data rather than prose so it can drive three things at once:
+#
+#   research/matrix.yaml  ──┬──> data/generators/    one generator per scenario
+#                           ├──> feature registry    every `features:` ref must resolve
+#                           └──> evaluation slices   every scenario is reported separately
+#
+# When they drift apart, research/validate.py fails.
+#
+# ---------------------------------------------------------------------------------
+# THE TWO FIELDS THAT MATTER MOST
+#
+#   confusable_with   what this scenario is mistaken for. Required on EVERY row,
+#                     attacks and legitimate traffic alike. A flash sale must declare
+#                     which attack it resembles, not only the reverse.
+#   discriminator     how to tell them apart, in terms of named features. If this
+#                     cannot be written, the scenario cannot be evaluated honestly
+#                     and does not belong in the matrix.
+#
+# A scenario without both is the definition of "volume anomaly treated as verdict".
+# ---------------------------------------------------------------------------------
+#
+# class:  legitimate | attack | mixed
+# label:  NORMAL | LEGIT_SPIKE | FRAUD_SPIKE      (window label after lifting, see ADR-003)
+#
+# DEFENCE ONLY. `mechanism` describes what an attack looks like in aggregate telemetry
+# so that we can detect it. No row describes how to conduct one. See docs/threat-model.md.
+
+version: 1
+feature_registry: research/features.yaml
+
+scenarios:
+
+# =================================================================================
+# LEGITIMATE — the hard negatives. Getting these wrong is the expensive failure.
+# =================================================================================
+
+- id: normal_day
+  class: legitimate
+  label: NORMAL
+  family: baseline
+  mechanism: >
+    Ordinary trading. Organic arrivals following the merchant's hour-of-week profile,
+    its established payment mix, its usual geography and price points.
+  observable_signals: []
+  time_scale: [1m, 5m, 15m, 1h]
+  entity_relationships:
+    dense: []
+    sparse: [account-device, device-instrument, account-address]
+  merchant_loss: {direct: none, downstream: []}
+  confusable_with: []
+  discriminator: >
+    This is the reference class. Everything else is defined as a departure from it.
+  features: [A.txn_rate, C.failure_rate, C.devices_per_txn, D.amount_median]
+  synthetic_recipe:
+    generate: [seasonality_hour_of_week, weekly_trend, organic_arrivals, price_distribution, method_mix, geo_mix]
+    inject: []
+  eval_metric: [false_alerts_per_merchant_per_day]
+  real_data_proxy: [ieee_cis, sparkov]
+
+- id: flash_sale
+  class: legitimate
+  label: LEGIT_SPIKE
+  family: demand_event
+  mechanism: >
+    Announced, time-boxed discount. Volume rises 5-20x within minutes and decays over
+    hours. Buyers are a mix of existing customers and genuinely new ones, each arriving
+    on their own device with their own instrument.
+  observable_signals: [volume_up, velocity_up, new_account_rate_up, coupon_rate_up, amount_median_down]
+  time_scale: [5m, 15m, 1h]
+  entity_relationships:
+    dense: []
+    sparse: [account-device, device-instrument]
+  merchant_loss: {direct: none, downstream: [inventory_strain, gateway_capacity]}
+  confusable_with: [card_testing_burst, promo_coupon_abuse, distributed_account_abuse, merchant_compromise_burst, cod_rto_abuse, ring_under_flash_sale]
+  discriminator: >
+    Volume scales but STRUCTURE does not. devices_per_txn, accounts_per_txn and
+    instruments_per_txn hold near their baseline because each new buyer brings a full
+    complement of their own entities. failure_rate stays within normal variation, and
+    the amount drop is explained by the discount, so discount_to_gmv moves in proportion
+    while low_value_ratio stays consistent with the advertised price points rather than
+    collapsing toward zero.
+  features: [A.txn_rate, A.rate_accel, C.devices_per_txn, C.accounts_per_txn, C.instruments_per_txn,
+             C.failure_rate, D.amount_median, D.discount_to_gmv, F.accounts_per_device_max,
+             J.largest_cluster_vol_share]
+  synthetic_recipe:
+    inject: [volume_multiplier, arrival_burst, coupon_rate, new_customer_influx]
+    hold_normal: [devices_per_txn, instruments_per_txn, failure_rate, geo_mix, accounts_per_device]
+    notes: "Amount drop must track the actual coupon value, not be applied as an independent knob."
+  eval_metric: [hard_negative_fp_rate, false_alerts_per_merchant_per_day]
+  real_data_proxy: [sparkov]
+
+- id: influencer_campaign
+  class: legitimate
+  label: LEGIT_SPIKE
+  family: demand_event
+  mechanism: >
+    A social post drives a sudden influx of first-time buyers. Unlike a flash sale, the
+    spike is unannounced, the audience is geographically skewed toward the creator's
+    following, and there is no discount driving it.
+  observable_signals: [volume_up, new_account_rate_up, account_age_down, geo_mix_shift]
+  time_scale: [15m, 1h]
+  entity_relationships:
+    dense: []
+    sparse: [account-device]
+  merchant_loss: {direct: none, downstream: [inventory_strain]}
+  confusable_with: [distributed_account_abuse, promo_coupon_abuse, account_takeover_wave, geographic_anomaly_burst]
+  discriminator: >
+    New accounts arrive with one device and one instrument each: accounts_per_device_max
+    stays near 1 and devices_per_account_max stays near 1. The geographic shift is toward
+    a plausible population centre and is broad (state_entropy rises), not concentrated
+    (geo_gini stays low). Coupon rate does not move, which separates it from promo abuse.
+    Account cohort creation is spread across the spike rather than pre-batched, so
+    account_cohort_concentration stays low.
+  features: [G.new_account_rate, G.account_age_median, G.account_cohort_concentration,
+             F.accounts_per_device_max, J.devices_per_account_max, E.state_entropy, E.geo_gini,
+             C.coupon_rate, J.bipartite_gini]
+  synthetic_recipe:
+    inject: [volume_multiplier, new_customer_influx, geo_skew]
+    hold_normal: [coupon_rate, failure_rate, accounts_per_device, amount_distribution]
+  eval_metric: [hard_negative_fp_rate]
+  real_data_proxy: []
+
+- id: product_launch
+  class: legitimate
+  label: LEGIT_SPIKE
+  family: demand_event
+  mechanism: >
+    A new SKU goes on sale. Volume concentrates hard on one product, often at a price
+    point outside the merchant's usual range, with queueing behaviour at the launch instant.
+  observable_signals: [volume_up, sku_concentration_up, amount_shift, velocity_up]
+  time_scale: [1m, 5m, 15m]
+  entity_relationships:
+    dense: []
+    sparse: [account-device]
+  merchant_loss: {direct: none, downstream: [inventory_strain]}
+  confusable_with: [sku_targeting_abuse, merchant_compromise_burst, card_testing_burst, payment_method_shift_anomaly]
+  discriminator: >
+    SKU concentration is extreme but every other axis stays normal: payment mix, geo mix,
+    failure rate, and above all the entity ratios. Buyers are disproportionately EXISTING
+    customers (account_age_median rises rather than falls) because launches convert an
+    existing audience. That inverted account-age signature is the cleanest separator from
+    abuse scenarios, which almost always pull account age down.
+  features: [G.account_age_median, G.new_account_rate, H.method_mix_jsd, E.geo_mix_jsd,
+             C.failure_rate, C.devices_per_txn, A.rate_accel, D.amount_median]
+  synthetic_recipe:
+    inject: [volume_multiplier, sku_concentration, launch_instant_queue, amount_shift]
+    hold_normal: [method_mix, geo_mix, failure_rate, entity_ratios]
+    notes: "Skew the buyer pool toward returning customers — this is what makes it a hard negative."
+  eval_metric: [hard_negative_fp_rate]
+  real_data_proxy: []
+
+- id: seasonal_festival_spike
+  class: legitimate
+  label: LEGIT_SPIKE
+  family: demand_event
+  mechanism: >
+    Diwali, end-of-season sales, payday. Volume rises across days, not minutes, and the
+    entire merchant population moves together.
+  observable_signals: [volume_up, sustained_elevation, cod_rate_up, amount_variance_up]
+  time_scale: [1h, 24h]
+  entity_relationships: {dense: [], sparse: [account-device]}
+  merchant_loss: {direct: none, downstream: [rto_increase]}
+  confusable_with: [merchant_compromise_burst, distributed_account_abuse, account_takeover_wave, refund_abuse_wave, cod_rto_abuse, cross_merchant_coordinated_ring, slow_ramp_infiltration]
+  discriminator: >
+    Two separators. First, the ramp is slow — rate_accel stays low even as txn_rate climbs
+    far above baseline, which no burst attack reproduces. Second, it is a POPULATION event:
+    peer merchants in the same category spike simultaneously. A per-merchant detector
+    cannot see that, which is the argument for a platform-level baseline term in ADR-002.
+  features: [A.rate_accel, A.burst_duration, A.hour_of_week_dev, C.cod_rate, D.amount_cv,
+             C.devices_per_txn, J.cross_merchant_entities]
+  synthetic_recipe:
+    inject: [population_wide_volume_multiplier, slow_ramp, cod_rate_shift]
+    hold_normal: [entity_ratios, failure_rate, instrument_novelty]
+    notes: "Must be injected across the merchant population simultaneously, never one merchant alone."
+  eval_metric: [hard_negative_fp_rate, false_alerts_per_merchant_per_day]
+  real_data_proxy: [sparkov]
+
+- id: gateway_retry_storm
+  class: legitimate
+  label: NORMAL
+  family: infrastructure
+  mechanism: >
+    A payment gateway or issuer degrades. Legitimate customers and client-side retry logic
+    re-attempt the same payments repeatedly. Volume and failure rate both spike with no
+    attacker present.
+  observable_signals: [velocity_up, failure_rate_up, retry_rate_up, volume_up]
+  time_scale: [1m, 5m, 15m]
+  entity_relationships: {dense: [account-instrument], sparse: [account-device]}
+  merchant_loss: {direct: lost_conversions, downstream: [support_cost]}
+  confusable_with: [card_testing_burst, bin_enumeration_attack, payment_method_shift_anomaly]
+  discriminator: >
+    THE central discriminator of the whole matrix. Retry storms re-attempt a SMALL
+    instrument set at a high repeat rate: instruments_per_txn collapses toward zero and
+    instrument_repeat_rate rises sharply. Card testing does the opposite — instruments_per_txn
+    approaches 1.0 because every attempt carries a fresh instrument. Reinforcing this,
+    decline codes in a storm concentrate on gateway/network causes (decline_code_top_share
+    high, decline_issuer_share low) while card testing produces spread issuer-side declines.
+    Amounts stay at the merchant's normal distribution throughout.
+  features: [C.instruments_per_txn, H.instrument_repeat_rate, C.retry_rate, C.failure_rate,
+             I.decline_code_top_share, I.decline_code_entropy, I.decline_issuer_share,
+             D.amount_median, D.low_value_ratio, C.instrument_novelty]
+  synthetic_recipe:
+    inject: [failure_rate_spike, retry_multiplier, gateway_decline_codes]
+    hold_normal: [instrument_novelty, amount_distribution, entity_ratios, geo_mix]
+    notes: "Retries must reuse the SAME instrument fingerprints. This is the whole point of the scenario."
+  eval_metric: [hard_negative_fp_rate]
+  real_data_proxy: []
+
+- id: subscription_renewal_batch
+  class: legitimate
+  label: NORMAL
+  family: infrastructure
+  mechanism: >
+    Recurring billing fires on a schedule. Hundreds of stored instruments are charged in a
+    short window, with an elevated but bounded decline rate from expired and insufficient-funds
+    cards.
+  observable_signals: [velocity_up, unique_instruments_up, failure_rate_up, amount_entropy_down]
+  time_scale: [1m, 5m, 15m]
+  entity_relationships: {dense: [], sparse: [account-instrument]}
+  merchant_loss: {direct: involuntary_churn, downstream: []}
+  confusable_with: [card_testing_burst, bin_enumeration_attack, device_farm_ring, payment_method_shift_anomaly]
+  discriminator: >
+    Instrument cardinality is high, like card testing — but instrument_novelty is near ZERO
+    because every instrument is already on file with this merchant. Timing is calendar-locked
+    (same hour, same day of month), amounts cluster on a handful of exact plan prices so
+    amount_entropy collapses at KNOWN values rather than at low values, and failure rate
+    settles around 10-20% rather than the 60-90% of a testing burst.
+  features: [C.instrument_novelty, C.instruments_per_txn, D.amount_entropy, D.low_value_ratio,
+             C.failure_rate, A.periodicity_score, A.hour_of_week_dev, I.decline_issuer_share]
+  synthetic_recipe:
+    inject: [batch_velocity, stored_instrument_charge, moderate_decline_rate]
+    hold_normal: [instrument_novelty, geo_mix, device_ratios]
+    notes: "Amounts must land on a small set of plan prices at the merchant's normal price level."
+  eval_metric: [hard_negative_fp_rate]
+  real_data_proxy: []
+
+- id: household_shared_device
+  class: legitimate
+  label: NORMAL
+  family: benign_structure
+  mechanism: >
+    A family shares a tablet or laptop. Several accounts, several instruments and one
+    shipping address legitimately converge on one device.
+  observable_signals: [accounts_per_device_up, shared_address, instruments_per_device_up]
+  time_scale: [1h, 24h]
+  entity_relationships: {dense: [account-device, account-address], sparse: []}
+  merchant_loss: {direct: none, downstream: []}
+  confusable_with: [device_farm_ring, promo_coupon_abuse, account_takeover_wave, low_volume_relationship_anomaly, dual_cluster_benign_and_malicious]
+  discriminator: >
+    Scale and history. Households run 2-5 accounts per device; farms run 20-500, so the
+    separator is the magnitude of accounts_per_device_max, not its existence. Household
+    accounts are OLD (account_age_p10 high) and were created months apart
+    (account_cohort_concentration low), purchases spread across categories and time, and
+    inter-arrival timing is human-irregular (interarrival_cv high). A farm inverts every
+    one of those.
+  features: [F.accounts_per_device_max, G.account_age_p10, G.account_cohort_concentration,
+             A.interarrival_cv, A.periodicity_score, G.accounts_per_address_max,
+             J.cluster_density_z, C.coupon_rate]
+  synthetic_recipe:
+    inject: [device_sharing_small, address_sharing_small]
+    hold_normal: [account_age, coupon_rate, amount_distribution, timing_irregularity]
+    notes: "Account ages must be drawn from the mature end of the distribution and staggered."
+  eval_metric: [hard_negative_fp_rate]
+  real_data_proxy: [ieee_cis]
+
+- id: international_expansion
+  class: legitimate
+  label: LEGIT_SPIKE
+  family: demand_event
+  mechanism: >
+    The merchant begins selling into a new country. Traffic appears from a geography with
+    no history, on unfamiliar instrument issuers, at a different price sensitivity.
+  observable_signals: [new_country_count_up, international_rate_up, issuer_country_entropy_up]
+  time_scale: [1h, 24h]
+  entity_relationships: {dense: [], sparse: [account-device]}
+  merchant_loss: {direct: none, downstream: [cross_border_dispute_risk]}
+  confusable_with: [geographic_anomaly_burst, account_takeover_wave, slow_ramp_infiltration]
+  discriminator: >
+    The new geography arrives with NEW accounts, which is exactly the opposite of account
+    takeover, where OLD accounts appear in new places. geo_transition_rate — the share of
+    accounts transacting away from their own historical region — stays near zero here and
+    spikes under ATO. Against a geographic attack burst, the separators are pace (a slow
+    ramp over days, not minutes) and structure (entity ratios and failure rate hold).
+  features: [E.new_country_count, E.geo_transition_rate, C.international_rate, C.account_novelty,
+             G.account_age_median, H.issuer_country_entropy, A.rate_accel, C.failure_rate]
+  synthetic_recipe:
+    inject: [new_geo_segment, slow_ramp, issuer_country_shift]
+    hold_normal: [entity_ratios, failure_rate, geo_transition_rate]
+    notes: "New-country traffic must come from newly created accounts native to that region."
+  eval_metric: [hard_negative_fp_rate]
+  real_data_proxy: [ieee_cis]
+
+# =================================================================================
+# ATTACK — coordinated abuse. Every row states what legitimate traffic it hides behind.
+# =================================================================================
+
+- id: card_testing_burst
+  class: attack
+  label: FRAUD_SPIKE
+  family: instrument_abuse
+  mechanism: >
+    An actor holding a list of card numbers of unknown validity uses a low-friction
+    merchant as an oracle, submitting many small authorisations to learn which numbers
+    approve. In aggregate telemetry this appears as high-velocity, low-value attempts
+    against a rapidly growing set of never-before-seen instruments, with most declining.
+  observable_signals: [velocity_up, decline_rate_up, instrument_cardinality_up,
+                       instrument_novelty_up, amount_median_down, amount_entropy_down]
+  time_scale: [1m, 5m, 15m]
+  entity_relationships:
+    dense: [device-instrument, ip-instrument]
+    sparse: [account-device]
+  merchant_loss:
+    direct: gateway_authorisation_fees
+    downstream: [chargebacks, processor_penalty, mid_risk_reclassification, gateway_capacity]
+  confusable_with: [gateway_retry_storm, subscription_renewal_batch, flash_sale, product_launch, bin_enumeration_attack]
+  discriminator: >
+    Instrument cardinality grows roughly 1:1 with attempts — instruments_per_txn near 1.0
+    and instrument_repeat_rate near 1.0 — which is the inverse of a retry storm's small
+    reused set. instrument_novelty is near 1.0, which a subscription batch cannot produce
+    since its instruments are all on file. Amounts collapse to a narrow low band that sits
+    BELOW the merchant's own p10, separating it from a flash sale where the discount is
+    real and priced. Declines are issuer-side and spread across codes.
+  features: [C.instruments_per_txn, C.instrument_novelty, H.instrument_repeat_rate, C.failure_rate, 
+             I.decline_issuer_share, I.decline_code_entropy, D.low_value_ratio, D.amount_entropy, 
+             D.amount_median, A.txn_rate, A.rate_accel, A.interarrival_cv, 
+             F.instruments_per_device_max, A.interarrival_p05]
+  synthetic_recipe:
+    inject: [velocity, instrument_cardinality, instrument_novelty, decline_rate, low_amount_band]
+    intensity_range: {attempts_per_min: [3, 400], decline_rate: [0.35, 0.95], novelty: [0.6, 1.0]}
+    forbid_single_feature_separability: [C.instruments_per_txn, D.low_value_ratio, C.failure_rate]
+    notes: >
+      Amounts must OVERLAP the merchant's low tail, never sit at a sentinel value.
+      Decline rate must range low enough that some instances are genuinely undetectable.
+  eval_metric: [window_pr_auc, incident_recall, detection_latency_p50, detection_floor]
+  real_data_proxy: [ieee_cis]
+
+- id: bin_enumeration_attack
+  class: attack
+  label: FRAUD_SPIKE
+  family: instrument_abuse
+  mechanism: >
+    A variant of testing in which candidate numbers are generated rather than stolen,
+    producing attempts clustered on a small number of issuing ranges. Aggregate signature
+    is card testing plus unusually high concentration in hashed BIN prefixes.
+  observable_signals: [instrument_cardinality_up, bin_concentration_up, decline_rate_up, velocity_up]
+  time_scale: [1m, 5m, 15m]
+  entity_relationships: {dense: [device-instrument], sparse: [account-instrument]}
+  merchant_loss: {direct: gateway_authorisation_fees, downstream: [processor_penalty, network_fine]}
+  confusable_with: [card_testing_burst, subscription_renewal_batch, gateway_retry_storm]
+  discriminator: >
+    Against a retry storm and a renewal batch, the same separators as card testing apply.
+    Against generic card testing it is a matter of degree rather than kind: bin_prefix_gini
+    is far higher because generated numbers share issuer ranges, and issuer_country_entropy
+    is far LOWER because a generated range belongs to one issuer in one country. Treated as
+    a distinct row because it is the case where H-family features carry the signal and the
+    C-family features alone would merely say "card testing".
+  features: [H.bin_prefix_gini, H.issuer_country_entropy, C.instruments_per_txn,
+             C.instrument_novelty, C.failure_rate, I.decline_issuer_share, D.low_value_ratio]
+  synthetic_recipe:
+    inject: [velocity, instrument_cardinality, bin_range_concentration, decline_rate]
+    intensity_range: {bin_concentration: [0.4, 0.95], attempts_per_min: [3, 300]}
+    forbid_single_feature_separability: [H.bin_prefix_gini]
+  eval_metric: [window_pr_auc, incident_recall, detection_floor]
+  real_data_proxy: [ieee_cis]
+
+- id: distributed_account_abuse
+  class: attack
+  label: FRAUD_SPIKE
+  family: account_abuse
+  mechanism: >
+    Many accounts, created in a batch and controlled by one operator, transact against a
+    merchant simultaneously. Each account individually resembles a new customer; the
+    cohort's creation timing and shared infrastructure are what give it away.
+  observable_signals: [new_account_rate_up, account_cohort_concentration_up, volume_up,
+                       account_age_down, ip_concentration_up]
+  time_scale: [5m, 15m, 1h]
+  entity_relationships:
+    dense: [account-ip, account-device, account-address]
+    sparse: [account-instrument]
+  merchant_loss: {direct: fraudulent_gmv, downstream: [chargebacks, fulfilment_cost, inventory_loss]}
+  confusable_with: [influencer_campaign, flash_sale, seasonal_festival_spike, dual_cluster_benign_and_malicious]
+  discriminator: >
+    Legitimate new-customer influxes bring accounts that are independent: one device and
+    one instrument each, created at staggered times, spread across networks. Here
+    account_cohort_concentration is high because the accounts were minted together,
+    accounts_per_ip_max and accounts_per_device_max exceed anything a genuine influx
+    produces, and bipartite_gini shows a small number of hub entities carrying the cohort.
+    The relationship features do the work; the volume features cannot separate these at all.
+  features: [G.account_cohort_concentration, G.new_account_rate, G.account_age_p10, 
+             J.accounts_per_ip_max, F.accounts_per_device_max, J.bipartite_gini, 
+             J.cluster_density_z, J.largest_cluster_vol_share, G.accounts_per_address_max, 
+             A.interarrival_cv, C.ips_per_txn]
+  synthetic_recipe:
+    inject: [account_cohort, ip_concentration, device_sharing_moderate, volume_multiplier]
+    intensity_range: {cohort_size: [8, 400], accounts_per_ip: [2, 60], accounts_per_device: [1, 40]}
+    forbid_single_feature_separability: [G.new_account_rate, J.accounts_per_ip_max]
+    notes: "accounts_per_device must reach 1 at the low end, so relationship signal alone is not always available."
+  eval_metric: [window_pr_auc, incident_recall, detection_latency_p50, detection_floor]
+  real_data_proxy: [ieee_cis]
+
+- id: device_farm_ring
+  class: attack
+  label: FRAUD_SPIKE
+  family: account_abuse
+  mechanism: >
+    A small pool of devices drives a large pool of accounts. The concentration of accounts,
+    instruments and addresses onto few device fingerprints is the defining structure.
+  observable_signals: [accounts_per_device_up, device_reuse_up, cluster_density_up,
+                       interarrival_cv_down, periodicity_up]
+  time_scale: [15m, 1h]
+  entity_relationships: {dense: [account-device, device-instrument, account-address], sparse: []}
+  merchant_loss: {direct: fraudulent_gmv, downstream: [chargebacks, promo_budget_loss, inventory_loss]}
+  confusable_with: [household_shared_device, subscription_renewal_batch]
+  discriminator: >
+    Against households, the separators are magnitude and history: accounts_per_device_max
+    an order of magnitude higher, account_age_p10 near zero, account_cohort_concentration
+    high, and machine-regular pacing (interarrival_cv low, periodicity_score high) where a
+    household is irregular. cluster_density_z matters more than raw density, because large
+    clusters are denser by construction and the question is whether this cluster is dense
+    FOR ITS SIZE.
+  features: [F.accounts_per_device_max, F.accounts_per_device_gini, F.device_reuse_rate, 
+             J.cluster_density_z, J.largest_cluster_size, J.bipartite_gini, G.account_age_p10, 
+             G.account_cohort_concentration, A.interarrival_cv, A.periodicity_score, 
+             G.accounts_per_address_max, F.txn_per_device_max, A.interarrival_mean]
+  synthetic_recipe:
+    inject: [device_concentration, account_cohort, address_reuse, scripted_pacing]
+    intensity_range: {accounts_per_device: [3, 200], pacing_cv: [0.05, 0.8]}
+    forbid_single_feature_separability: [F.accounts_per_device_max, A.interarrival_cv]
+    notes: "Low end must overlap the household range so magnitude alone cannot separate."
+  eval_metric: [window_pr_auc, incident_recall, detection_floor]
+  real_data_proxy: [ieee_cis]
+
+- id: promo_coupon_abuse
+  class: attack
+  label: FRAUD_SPIKE
+  family: incentive_abuse
+  mechanism: >
+    A promotional offer intended for new customers is farmed. Accounts are created solely
+    to redeem it, carts are assembled to the minimum qualifying value, and the same
+    underlying person recurs behind different account identities.
+  observable_signals: [coupon_rate_up, discount_to_gmv_up, new_account_rate_up,
+                       amount_entropy_down, address_reuse_up]
+  time_scale: [15m, 1h]
+  entity_relationships: {dense: [account-device, account-address, account-instrument], sparse: []}
+  merchant_loss:
+    direct: marketing_budget_loss
+    downstream: [fulfilment_cost, inventory_loss, distorted_cac_metrics]
+  confusable_with: [flash_sale, influencer_campaign, ring_under_flash_sale, household_shared_device]
+  discriminator: >
+    A real promotion also raises coupon_rate and new_account_rate — that pair separates
+    nothing. Two things do. First, carts converge on the minimum qualifying basket, so
+    amount_entropy collapses at one specific value and discount_to_gmv rises far beyond
+    the offer's intended ratio. Second, the "new customers" are not independent: they
+    share addresses, devices and instruments, so accounts_per_address_max and
+    accounts_per_device_max rise while a genuine campaign holds both near 1.
+  features: [D.discount_to_gmv, D.amount_entropy, C.coupon_rate, G.accounts_per_address_max,
+             F.accounts_per_device_max, G.new_account_rate, G.account_cohort_concentration,
+             J.shared_address_clusters, J.cluster_density_z]
+  synthetic_recipe:
+    inject: [coupon_farming, minimum_basket_convergence, address_reuse, account_cohort]
+    intensity_range: {accounts_per_address: [1, 25], basket_convergence: [0.3, 1.0]}
+    forbid_single_feature_separability: [C.coupon_rate, D.discount_to_gmv]
+    notes: "Must run CONCURRENTLY with a genuine promotion in some instances, so coupon_rate alone is useless."
+  eval_metric: [window_pr_auc, incident_recall, detection_floor]
+  real_data_proxy: []
+
+- id: account_takeover_wave
+  class: attack
+  label: FRAUD_SPIKE
+  family: account_abuse
+  mechanism: >
+    Established accounts are accessed by someone other than their owner and used to
+    transact. The transactions look legitimate because the accounts are legitimate; the
+    change in each account's own behaviour is the signal.
+  observable_signals: [device_novelty_up, geo_transition_up, amount_shift, velocity_up]
+  time_scale: [5m, 15m, 1h]
+  entity_relationships: {dense: [device-account, ip-account], sparse: [account-instrument]}
+  merchant_loss: {direct: fraudulent_gmv, downstream: [chargebacks, customer_churn, support_cost]}
+  confusable_with: [international_expansion, household_shared_device, seasonal_festival_spike, influencer_campaign]
+  discriminator: >
+    The defining signature is a CONTRADICTION that no benign scenario produces: accounts
+    are OLD (account_age_median high) yet their devices and geographies are NEW. Expansion
+    brings new accounts to new places, so geo_transition_rate stays flat there and spikes
+    here. A household shares a device across accounts that all legitimately belong to it,
+    so device_novelty stays low. Here device_novelty and geo_transition_rate rise together
+    while account age does not fall — that conjunction is the detector.
+  features: [G.account_age_median, C.device_novelty, E.geo_transition_rate, 
+             J.devices_per_account_max, J.accounts_per_ip_max, D.high_value_ratio, A.txn_rate, 
+             H.method_mix_jsd, G.txn_per_account_max]
+  synthetic_recipe:
+    inject: [device_novelty_on_aged_accounts, geo_transition, amount_uplift, velocity]
+    intensity_range: {accounts_compromised: [3, 120], geo_transition_rate: [0.2, 1.0]}
+    forbid_single_feature_separability: [C.device_novelty, E.geo_transition_rate]
+    notes: "Compromised accounts must be drawn from the merchant's REAL existing customer pool with genuine history."
+  eval_metric: [window_pr_auc, incident_recall, detection_latency_p50]
+  real_data_proxy: [ieee_cis]
+
+- id: geographic_anomaly_burst
+  class: attack
+  label: FRAUD_SPIKE
+  family: composition_shift
+  mechanism: >
+    Volume arrives from a geography inconsistent with the merchant's customer base,
+    concentrated rather than spread, and pairing with instrument issuers that do not
+    match the claimed location.
+  observable_signals: [geo_mix_jsd_up, geo_gini_up, international_rate_up, issuer_geo_mismatch]
+  time_scale: [5m, 15m, 1h]
+  entity_relationships: {dense: [ip-account], sparse: []}
+  merchant_loss: {direct: fraudulent_gmv, downstream: [cross_border_dispute_risk, chargebacks]}
+  confusable_with: [international_expansion, influencer_campaign]
+  discriminator: >
+    Legitimate geographic change is BROAD and slow: entropy rises, concentration does not,
+    and the ramp takes days. An attack burst is narrow and fast — geo_gini rises alongside
+    geo_mix_jsd, which expansion never does, and rate_accel is high. Instrument issuer
+    country stops matching transaction geography, a mismatch genuine buyers rarely produce
+    at scale. Explicitly NOT modelled as "foreign equals fraud": domestic-only instances
+    are included, where the anomaly is an unusual internal region.
+  features: [E.geo_mix_jsd, E.geo_gini, E.country_entropy, E.state_entropy, E.new_country_count,
+             H.issuer_country_entropy, A.rate_accel, C.international_rate, J.accounts_per_ip_max]
+  synthetic_recipe:
+    inject: [geo_concentration, issuer_geo_mismatch, rapid_ramp]
+    intensity_range: {geo_gini: [0.3, 0.95], foreign_share: [0.0, 0.9]}
+    forbid_single_feature_separability: [C.international_rate]
+    notes: "At least a third of instances must be DOMESTIC-only, or the model will learn 'foreign = fraud'."
+  eval_metric: [window_pr_auc, incident_recall, detection_floor]
+  real_data_proxy: [ieee_cis]
+
+- id: payment_method_shift_anomaly
+  class: attack
+  label: FRAUD_SPIKE
+  family: composition_shift
+  mechanism: >
+    Total volume stays within normal bounds while its composition changes — a merchant
+    whose traffic is 70% UPI suddenly runs 90% cards. The shift itself is the anomaly.
+  observable_signals: [method_mix_jsd_up, method_entropy_down, card_share_up, failure_rate_shift]
+  time_scale: [15m, 1h]
+  entity_relationships: {dense: [device-instrument], sparse: []}
+  merchant_loss: {direct: fraudulent_gmv, downstream: [chargebacks, higher_interchange]}
+  confusable_with: [gateway_retry_storm, subscription_renewal_batch, product_launch]
+  discriminator: >
+    A gateway outage also shifts method mix — because one rail is failing. That case shows
+    the abandoned method with a HIGH failure rate before the shift; here the abandoned
+    method was working fine. Renewal batches shift toward cards too, but with zero
+    instrument novelty. This is the scenario that justifies detecting on composition
+    independent of volume: txn_count stays inside its normal band throughout.
+  features: [H.method_mix_jsd, H.method_entropy, H.card_share, C.instrument_novelty,
+             I.decline_code_top_share, C.failure_rate, B.txn_count, D.amount_median]
+  synthetic_recipe:
+    inject: [method_mix_shift, instrument_novelty]
+    hold_normal: [txn_count, txn_rate]
+    intensity_range: {mix_shift_jsd: [0.1, 0.8]}
+    forbid_single_feature_separability: [H.card_share]
+    notes: "Volume MUST stay within the normal band. If volume moves, this scenario is not testing what it claims to."
+  eval_metric: [window_pr_auc, incident_recall]
+  real_data_proxy: [ieee_cis]
+
+- id: merchant_compromise_burst
+  class: attack
+  label: FRAUD_SPIKE
+  family: merchant_level
+  mechanism: >
+    The merchant's own account or integration is misused — credentials compromised, or a
+    bust-out in progress. Transaction behaviour changes along several axes at once in a
+    way the merchant's own history does not support.
+  observable_signals: [volume_up, method_mix_jsd_up, international_rate_up, amount_shift,
+                       failure_rate_up, refund_rate_up]
+  time_scale: [15m, 1h]
+  entity_relationships: {dense: [], sparse: []}
+  merchant_loss: {direct: fraudulent_gmv, downstream: [chargebacks, platform_liability, settlement_hold]}
+  confusable_with: [product_launch, seasonal_festival_spike, flash_sale]
+  discriminator: >
+    Benign merchant-level events move ONE axis sharply and leave the others alone: a launch
+    concentrates SKUs, a festival raises volume, a sale lowers price. Compromise moves
+    several weakly and simultaneously — the §35 case where no single feature is decisive.
+    The detector is the COUNT of families deviating past a moderate threshold, not the
+    magnitude of any one. Buyer-side entity ratios stay normal here, which is what separates
+    it from the customer-side attacks above.
+  features: [H.method_mix_jsd, E.geo_mix_jsd, D.amount_median, D.high_value_ratio,
+             C.failure_rate, C.international_rate, I.refund_rate, A.txn_rate,
+             C.devices_per_txn, G.account_age_median]
+  synthetic_recipe:
+    inject: [multi_axis_weak_shift]
+    intensity_range: {per_axis_deviation: [1.5, 4.0], axes_moved: [3, 6]}
+    forbid_single_feature_separability: all
+    notes: >
+      No single axis may exceed 4 MAD. The scenario exists specifically to test whether
+      weak-signal fusion works, so any instance separable by one feature is malformed.
+  eval_metric: [window_pr_auc, incident_recall, ablation_vs_baseline_b]
+  real_data_proxy: []
+
+- id: refund_abuse_wave
+  class: attack
+  label: FRAUD_SPIKE
+  family: post_transaction
+  mechanism: >
+    A cohort exploits the refund path — claiming non-receipt, returning substituted goods,
+    or cycling purchase-and-refund. Detected on refund behaviour rather than payment behaviour.
+  observable_signals: [refund_rate_up, refund_cohort_concentration_up, refund_latency_shift]
+  time_scale: [1h, 24h]
+  entity_relationships: {dense: [account-address, account-device], sparse: []}
+  merchant_loss: {direct: refunded_gmv, downstream: [shipping_cost, inventory_loss, support_cost]}
+  confusable_with: [product_quality_return_wave, seasonal_festival_spike]
+  discriminator: >
+    A genuine return wave from a defective batch concentrates on a SKU and spreads across
+    unrelated customers. Abuse concentrates on a COHORT and spreads across SKUs — so
+    refund_cohort_concentration is the separator, not refund_rate. Abuse refunds also
+    cluster at a characteristic latency (just inside the policy window), giving
+    refund_latency_median an unnaturally tight distribution.
+  features: [I.refund_rate, I.refund_cohort_concentration, I.refund_latency_median,
+             G.accounts_per_address_max, F.accounts_per_device_max, J.cluster_density_z,
+             J.shared_address_clusters]
+  synthetic_recipe:
+    inject: [refund_cohort, refund_latency_clustering]
+    intensity_range: {cohort_share_of_refunds: [0.2, 0.95]}
+    forbid_single_feature_separability: [I.refund_rate]
+    notes: "Requires a paired benign product_quality_return_wave instance or the discriminator is untested."
+  eval_metric: [window_pr_auc, incident_recall]
+  real_data_proxy: []
+
+- id: product_quality_return_wave
+  class: legitimate
+  label: NORMAL
+  family: post_transaction
+  mechanism: >
+    A defective or mis-described batch ships. Refunds rise sharply among unrelated
+    customers who happen to have bought the same SKU.
+  observable_signals: [refund_rate_up, sku_concentration_in_refunds]
+  time_scale: [1h, 24h]
+  entity_relationships: {dense: [], sparse: []}
+  merchant_loss: {direct: refunded_gmv, downstream: [reputation, support_cost]}
+  confusable_with: [refund_abuse_wave]
+  discriminator: >
+    The paired negative for refund abuse. Refund rate rises identically; concentration
+    does not. refund_cohort_concentration stays low because the refunders share only a
+    product, and refund_latency spreads naturally across the delivery-and-inspection
+    distribution rather than clustering at a policy boundary.
+  features: [I.refund_rate, I.refund_cohort_concentration, I.refund_latency_median,
+             J.cluster_density_z, G.accounts_per_address_max]
+  synthetic_recipe:
+    inject: [sku_linked_refund_wave]
+    hold_normal: [cohort_concentration, entity_ratios, refund_latency_spread]
+  eval_metric: [hard_negative_fp_rate]
+  real_data_proxy: []
+
+- id: cod_rto_abuse
+  class: attack
+  label: FRAUD_SPIKE
+  family: post_transaction
+  mechanism: >
+    Cash-on-delivery orders are placed with no intent to accept them, or to a cohort of
+    addresses with a history of refusal. The merchant absorbs forward and return shipping.
+  observable_signals: [cod_rate_up, address_reuse_up, new_account_rate_up, geo_gini_up]
+  time_scale: [1h, 24h]
+  entity_relationships: {dense: [account-address, account-device], sparse: [account-instrument]}
+  merchant_loss: {direct: shipping_and_return_cost, downstream: [inventory_in_transit, opportunity_cost]}
+  confusable_with: [seasonal_festival_spike, flash_sale]
+  discriminator: >
+    Festivals genuinely raise cod_rate across the whole merchant population, so the rate
+    alone means nothing. The separator is address structure: accounts_per_address_max and
+    shared_address_clusters rise here and stay flat during a festival, and the addresses
+    concentrate geographically (geo_gini up) where festival COD spreads with normal
+    demand geography.
+  features: [C.cod_rate, G.accounts_per_address_max, J.shared_address_clusters, E.geo_gini,
+             G.new_account_rate, G.account_age_p10, J.cluster_density_z]
+  synthetic_recipe:
+    inject: [cod_concentration, address_cohort, account_cohort]
+    intensity_range: {accounts_per_address: [1, 20], cod_share: [0.4, 1.0]}
+    forbid_single_feature_separability: [C.cod_rate]
+    notes: "Must be generated during festival windows in some instances so cod_rate is confounded by design."
+  eval_metric: [window_pr_auc, incident_recall]
+  real_data_proxy: []
+
+- id: dispute_cohort_wave
+  class: attack
+  label: FRAUD_SPIKE
+  family: post_transaction
+  mechanism: >
+    Weeks after a set of transactions, disputes arrive concentrated on one cohort of
+    accounts, devices or instruments. Purely retrospective.
+  observable_signals: [dispute_rate_up, dispute_cohort_concentration]
+  time_scale: [24h]
+  entity_relationships: {dense: [account-instrument, account-device], sparse: []}
+  merchant_loss: {direct: disputed_gmv, downstream: [chargeback_fees, mid_risk_reclassification]}
+  confusable_with: [seasonal_dispute_baseline_drift]
+  discriminator: >
+    NOT A REAL-TIME DETECTION TARGET. Disputes land weeks after the transaction, so this
+    scenario exists to supply LABELS and to answer a different question: could Veyra have
+    flagged the originating window at the time, using only what was observable then? It is
+    scored as retrospective label quality, never as a live detector, and its features are
+    all downstream_only. See ADR-004.
+  features: [I.dispute_rate, I.chargeback_rate]
+  synthetic_recipe:
+    inject: [delayed_dispute_cohort]
+    notes: "Disputes are emitted 14-90 days after the originating transaction. Never available at scoring time."
+  eval_metric: [retrospective_label_quality]
+  real_data_proxy: [ieee_cis]
+
+- id: cross_merchant_coordinated_ring
+  class: attack
+  label: FRAUD_SPIKE
+  family: platform_level
+  mechanism: >
+    One operator spreads activity across many merchants, staying beneath every individual
+    merchant's alerting threshold. Each merchant sees a mild, unremarkable anomaly; the
+    platform sees one entity cluster touching all of them at once.
+  observable_signals: [cross_merchant_fanout_up, entity_overlap_across_merchants]
+  time_scale: [15m, 1h]
+  entity_relationships: {dense: [device-merchant, instrument-merchant, ip-merchant], sparse: []}
+  merchant_loss: {direct: fraudulent_gmv_distributed, downstream: [chargebacks, platform_liability]}
+  confusable_with: [aggregator_or_psp_shared_infrastructure, seasonal_festival_spike]
+  discriminator: >
+    Per-merchant, this is INVISIBLE by construction: every window sits inside its normal
+    band, so families A through I have nothing to report. Only cross_merchant_fanout_max
+    separates it, and the benign look-alike is shared infrastructure — a corporate proxy or
+    a PSP-hosted checkout legitimately fans one IP across merchants. That is separated by
+    which entity type fans out: shared infrastructure fans IPs while devices and instruments
+    stay merchant-local; a ring fans devices AND instruments, which nothing benign does.
+    This row is the entire justification for building cross-merchant features, and the
+    target of evasion E8.
+  features: [J.cross_merchant_fanout_max, J.cross_merchant_entities, J.cluster_density_z,
+             J.entity_novelty_share, J.largest_cluster_vol_share]
+  synthetic_recipe:
+    inject: [entity_fanout_across_merchants]
+    intensity_range: {merchants_touched: [2, 25], per_merchant_volume_share: [0.01, 0.15]}
+    forbid_single_feature_separability: all
+    notes: >
+      Per-merchant deviation must stay under 2 MAD on every family A-I feature. If any
+      single merchant's window is independently detectable, the instance is malformed.
+      Requires a paired benign shared-infrastructure instance.
+  eval_metric: [incident_recall, ablation_vs_baseline_b, detection_floor]
+  real_data_proxy: []
+
+# =================================================================================
+# MIXED / ADVERSARIAL — benign and malicious in the same window. The hardest rows,
+# and the ones that decide whether window-average features are sufficient (they are not).
+# =================================================================================
+
+- id: ring_under_flash_sale
+  class: mixed
+  label: FRAUD_SPIKE
+  family: adversarial
+  mechanism: >
+    A device-farm ring times its activity to coincide with a genuine flash sale. The sale
+    supplies volume, novelty and coupon usage that explain away every aggregate the ring
+    would otherwise disturb.
+  observable_signals: [volume_up, coupon_rate_up, subcluster_density_anomaly]
+  time_scale: [5m, 15m, 1h]
+  entity_relationships: {dense: [account-device, account-address], sparse: []}
+  merchant_loss: {direct: fraudulent_gmv, downstream: [chargebacks, promo_budget_loss]}
+  confusable_with: [flash_sale, promo_coupon_abuse]
+  discriminator: >
+    The decisive case for cluster-level features over window aggregates. The ring is 2-10%
+    of window volume, so every window MEAN is diluted back into the flash sale's normal
+    range — accounts_per_device_mean barely moves. What survives dilution is the shape of
+    the extremes: largest_cluster_vol_share and cluster_density_z isolate a sub-population
+    whose internal structure is anomalous regardless of what surrounds it, and
+    accounts_per_device_gini separates "one hub plus many singletons" from "uniformly one
+    device each" even when the mean is identical.
+  features: [J.largest_cluster_vol_share, J.cluster_density_z, J.cluster_count,
+             F.accounts_per_device_gini, F.accounts_per_device_max, F.accounts_per_device_mean,
+             J.bipartite_gini, G.account_cohort_concentration, A.interarrival_cv]
+  synthetic_recipe:
+    compose: [flash_sale, device_farm_ring]
+    intensity_range: {ring_share_of_volume: [0.01, 0.25]}
+    forbid_single_feature_separability: all
+    notes: >
+      Ring share must reach 1% at the low end. Any instance where a window-MEAN feature
+      separates the composite from a plain flash sale is malformed — that is the whole point.
+  eval_metric: [window_pr_auc, incident_recall, ablation_vs_baseline_b, detection_floor]
+  real_data_proxy: []
+
+- id: low_volume_relationship_anomaly
+  class: attack
+  label: FRAUD_SPIKE
+  family: adversarial
+  mechanism: >
+    Coordinated abuse that never raises volume meaningfully — 30 transactions becoming 80 —
+    but whose entity structure is extreme. The brief's §35 case: fraud that spikes in
+    relationships rather than in volume.
+  observable_signals: [cluster_density_up, accounts_per_device_up, entity_novelty_up]
+  time_scale: [15m, 1h]
+  entity_relationships: {dense: [account-device, account-instrument, account-address], sparse: []}
+  merchant_loss: {direct: fraudulent_gmv, downstream: [chargebacks]}
+  confusable_with: [household_shared_device, normal_day]
+  discriminator: >
+    Volume deviation is under 3x and often under 2x, so Baseline A cannot see this at any
+    threshold that would survive the hard negatives — which is precisely the experiment.
+    Detection rests entirely on family J. Against households the separators are the usual
+    ones (cohort concentration, account age, scripted pacing); against normal traffic it is
+    simply that cluster_density_z has no benign explanation at this magnitude.
+  features: [J.cluster_density_z, J.largest_cluster_size, J.bipartite_gini,
+             F.accounts_per_device_max, J.entity_novelty_share, G.account_cohort_concentration,
+             A.interarrival_cv, B.txn_count]
+  synthetic_recipe:
+    inject: [relationship_density, mild_volume_lift]
+    intensity_range: {volume_multiplier: [1.2, 3.0], accounts_per_device: [4, 60]}
+    forbid_single_feature_separability: [B.txn_count, A.txn_rate]
+    notes: "Volume multiplier is CAPPED at 3x by design. This row exists to make Baseline A fail."
+  eval_metric: [window_pr_auc, incident_recall, ablation_vs_baseline_a, ablation_vs_baseline_b]
+  real_data_proxy: []
+
+- id: dual_cluster_benign_and_malicious
+  class: mixed
+  label: FRAUD_SPIKE
+  family: adversarial
+  mechanism: >
+    Two structurally distinct clusters occupy the same window: a legitimate one (a corporate
+    bulk buyer, a household, a shared campus network) and a malicious one. Both raise
+    relationship features.
+  observable_signals: [multiple_dense_clusters, mixed_cluster_signatures]
+  time_scale: [15m, 1h]
+  entity_relationships: {dense: [account-device, account-ip], sparse: []}
+  merchant_loss: {direct: fraudulent_gmv, downstream: [chargebacks]}
+  confusable_with: [household_shared_device, distributed_account_abuse]
+  discriminator: >
+    Tests whether the system scores CLUSTERS or merely windows. A window-level relationship
+    score cannot distinguish "one benign dense cluster" from "one benign plus one malicious",
+    so a detector that flags on window aggregates either misses this or false-positives on
+    the benign-only case. The separation lives in per-cluster properties — the benign cluster
+    has old accounts, irregular pacing and diverse baskets; the malicious one has none of
+    those — which requires cluster-level scoring with window-level aggregation afterwards.
+  features: [J.cluster_count, J.cluster_density_z, J.largest_cluster_vol_share,
+             G.account_age_p10, G.account_cohort_concentration, A.interarrival_cv,
+             F.accounts_per_device_gini]
+  synthetic_recipe:
+    compose: [household_shared_device, device_farm_ring]
+    intensity_range: {benign_cluster_share: [0.2, 0.8]}
+    forbid_single_feature_separability: all
+    notes: >
+      Requires a paired benign-cluster-only instance in the same merchant and window size.
+      Without that pair the scenario measures nothing.
+  eval_metric: [window_pr_auc, incident_recall, hard_negative_fp_rate]
+  real_data_proxy: []
+
+- id: slow_ramp_infiltration
+  class: attack
+  label: FRAUD_SPIKE
+  family: adversarial
+  mechanism: >
+    An attack that ramps over hours rather than seconds, keeping acceleration inside normal
+    bounds at every moment while the cumulative departure from baseline becomes large.
+  observable_signals: [sustained_drift, low_acceleration, cumulative_deviation]
+  time_scale: [1h, 24h]
+  entity_relationships: {dense: [account-device], sparse: []}
+  merchant_loss: {direct: fraudulent_gmv, downstream: [chargebacks]}
+  confusable_with: [seasonal_festival_spike, international_expansion]
+  discriminator: >
+    Defeats every short-window detector by construction, which is the argument for the
+    multi-window design in ADR-002: no 1m or 5m window ever looks abnormal, while the 1h
+    window's deviation accumulates. Against the benign slow ramps it resembles, the
+    separator is that legitimate drift preserves structure while this one drifts in
+    composition and relationships at the same time. This scenario is also evasion E1
+    promoted to a first-class row, because it is realistic rather than merely adversarial.
+  features: [A.burst_duration, A.rate_accel, A.hour_of_week_dev, J.cluster_density_z,
+             C.instrument_novelty, C.device_novelty, H.method_mix_jsd, J.entity_novelty_share]
+  synthetic_recipe:
+    inject: [slow_ramp, relationship_density, novelty_drift]
+    intensity_range: {ramp_minutes: [30, 480]}
+    forbid_single_feature_separability: [A.rate_accel]
+    notes: "rate_accel must stay under 2 MAD at every point. If a short window catches it, the ramp was too fast."
+  eval_metric: [incident_recall, detection_latency_p50, detection_latency_p90, detection_floor]
+  real_data_proxy: []
+
+
+# =================================================================================
+# EXTERNAL LOOK-ALIKES
+#
+# Confusion targets that are real and named, but are NOT scenarios in this matrix —
+# either out of initial scope (§37) or not a detection target at all. Declared here so
+# validate.py can tell a deliberate out-of-scope reference from a typo. Promoting one
+# to a scenario means giving it a generator, features and an eval slice.
+# =================================================================================
+
+external_lookalikes:
+
+  sku_targeting_abuse: >
+    Inventory hoarding and scalping — bots clearing limited stock for resale. A real abuse
+    class with a genuine aggregate signature, deliberately out of scope for v1 per §37.
+    Named here because product_launch is confusable with it, and a later matrix version
+    that adds it must also add the generator and the hard negative.
+
+  seasonal_dispute_baseline_drift: >
+    Dispute rates drift with season and product mix without any abuse cohort behind them.
+    Not a detection target: it is the null hypothesis dispute_cohort_wave is scored against
+    during retrospective label review.
+
+  aggregator_or_psp_shared_infrastructure: >
+    A corporate proxy, campus network or PSP-hosted checkout page legitimately fans one IP
+    or one device fingerprint across many merchants. The benign look-alike for
+    cross_merchant_coordinated_ring, and the reason cross-merchant fan-out must be scored
+    by entity TYPE rather than by fan-out count alone. Generated as an entity-graph
+    background condition rather than as a merchant-window scenario.
