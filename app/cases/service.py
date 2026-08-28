@@ -8,7 +8,7 @@ idempotency requirement.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -68,7 +68,7 @@ async def upsert_campaign(
         existing.shared_entities = cluster.shared_entities
         existing.transaction_ids = cluster.transaction_ids[:500]
         existing.evidence = evidence
-        existing.updated_at = datetime.now(timezone.utc)
+        existing.updated_at = datetime.now(UTC)
         return existing, False
 
     row = CampaignRow(
@@ -83,7 +83,7 @@ async def upsert_campaign(
         transaction_ids=cluster.transaction_ids[:500],
         evidence=evidence,
         graph_version=graph_version,
-        detected_at=cluster.last_seen or datetime.now(timezone.utc),
+        detected_at=cluster.last_seen or datetime.now(UTC),
     )
     session.add(row)
     try:
@@ -113,7 +113,7 @@ async def open_case_for_campaign(
             dict.fromkeys([*existing.transaction_ids, *campaign.transaction_ids])
         )[:500]
         existing.severity = str(severity_for(campaign.campaign_risk))
-        existing.updated_at = datetime.now(timezone.utc)
+        existing.updated_at = datetime.now(UTC)
         return existing, False
 
     row = RiskCaseRow(

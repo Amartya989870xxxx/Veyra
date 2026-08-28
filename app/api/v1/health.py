@@ -61,7 +61,9 @@ async def ready() -> dict:
     ready_state = db_ok
     degraded = [name for name, c in components.items() if c["status"] != "ok"]
     return {
-        "status": "ready" if ready_state and not degraded else ("ready" if ready_state else "not_ready"),
+        "status": (
+            "ready" if ready_state and not degraded else ("ready" if ready_state else "not_ready")
+        ),
         "ready": ready_state,
         "degraded_components": degraded,
         "components": components,

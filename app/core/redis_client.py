@@ -9,6 +9,7 @@ caller surfaces that in the decision (PRD §25.4).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from collections import defaultdict, deque
 
@@ -232,10 +233,8 @@ class HotStateClient:
 
     async def close(self) -> None:
         if self._client is not None:
-            try:
+            with contextlib.suppress(Exception):  # pragma: no cover
                 await self._client.aclose()
-            except Exception:  # pragma: no cover
-                pass
         self._client = None
 
 

@@ -11,7 +11,12 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from sqlalchemy import event, text
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from app.core.config import Settings, get_settings
 from app.core.errors import PersistenceError
@@ -37,7 +42,11 @@ def _create_engine(settings: Settings) -> AsyncEngine:
             cursor.close()
 
         return engine
-    kwargs.update(pool_size=settings.db_pool_size, max_overflow=settings.db_pool_size, pool_pre_ping=True)
+    kwargs.update(
+        pool_size=settings.db_pool_size,
+        max_overflow=settings.db_pool_size,
+        pool_pre_ping=True,
+    )
     return create_async_engine(settings.database_url, **kwargs)
 
 

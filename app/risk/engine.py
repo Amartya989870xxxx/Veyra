@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 
@@ -243,7 +243,7 @@ class RiskEngine:
             fusion=fusion,
             component_health=health,
             model_versions=self._model_versions(fusion),
-            decided_at=datetime.now(timezone.utc),
+            decided_at=datetime.now(UTC),
             latency_ms=round(latency_ms, 3),
             degraded_components=degraded,
         )

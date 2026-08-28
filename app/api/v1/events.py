@@ -20,7 +20,9 @@ from app.schemas.events import (
 from app.transactions import repository as repo
 
 router = APIRouter(
-    prefix="/api/v1", tags=["ingestion"], dependencies=[Depends(require_api_key), Depends(rate_limit)]
+    prefix="/api/v1",
+    tags=["ingestion"],
+    dependencies=[Depends(require_api_key), Depends(rate_limit)],
 )
 
 

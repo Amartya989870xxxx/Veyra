@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import pickle
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -68,7 +68,7 @@ class ComponentModel:
         estimator = _new_estimator(self.seed)
         estimator.fit(features, labels)
         self.estimator = estimator
-        self.trained_on = int(len(labels))
+        self.trained_on = len(labels)
         self.positive_rate = float(labels.mean())
         return self
 
@@ -111,7 +111,7 @@ class FusionModel:
         self.component_names = list(component_names)
         self.coefficients = [float(c) for c in model.coef_[0]]
         self.intercept = float(model.intercept_[0])
-        self.trained_on = int(len(labels))
+        self.trained_on = len(labels)
         return self
 
     def predict(self, component_scores: np.ndarray) -> np.ndarray:

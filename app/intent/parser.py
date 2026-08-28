@@ -9,7 +9,7 @@ becomes a prerequisite.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
 from app.schemas.entities import IntentContract
@@ -92,6 +92,6 @@ def parse_instruction(text: str | None, *, valid_days: int = 30) -> IntentContra
         forbidden_categories=forbidden,
         merchant_policy=policy,
         approval_required_above=max_amount,
-        valid_until=datetime.now(timezone.utc) + timedelta(days=valid_days),
+        valid_until=datetime.now(UTC) + timedelta(days=valid_days),
         source_text=text[:2000],
     )

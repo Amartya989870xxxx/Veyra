@@ -8,7 +8,7 @@ to ``event_id`` so replay is safe even when a client omits it.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Literal, Union
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -86,14 +86,7 @@ class OrderCreatedEvent(EventEnvelope):
 
 
 CanonicalEvent = Annotated[
-    Union[
-        TransactionAttemptEvent,
-        PaymentResultEvent,
-        AgentActionEvent,
-        SessionStartedEvent,
-        DelegationCreatedEvent,
-        OrderCreatedEvent,
-    ],
+    TransactionAttemptEvent | PaymentResultEvent | AgentActionEvent | SessionStartedEvent | DelegationCreatedEvent | OrderCreatedEvent,
     Field(discriminator="event_type"),
 ]
 

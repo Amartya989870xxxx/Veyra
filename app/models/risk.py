@@ -59,7 +59,7 @@ class RiskDecisionRow(Base):
     request_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     decided_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
 
-    evidence: Mapped[list["RiskEvidenceRow"]] = relationship(
+    evidence: Mapped[list[RiskEvidenceRow]] = relationship(
         back_populates="decision_row", cascade="all, delete-orphan", lazy="selectin"
     )
 

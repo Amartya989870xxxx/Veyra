@@ -225,7 +225,7 @@ class StreamingContextBuilder:
         found: list[TxnView] = []
         truncated = False
         for key in txn.linking_keys():
-            for txn_id in self._by_entity.get(key, ()):  # noqa: SIM118
+            for txn_id in self._by_entity.get(key, ()):
                 if txn_id in seen:
                     continue
                 seen.add(txn_id)

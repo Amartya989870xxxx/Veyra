@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -205,7 +205,7 @@ def run_evaluation(
     detectors = detectors or ["rules", "txn_ml", "veyra"]
     cost_model = cost_model or cost_model_from_settings(settings)
     run_id = new_run_id()
-    started_at = datetime.now(timezone.utc)
+    started_at = datetime.now(UTC)
     clock = time.perf_counter()
 
     if dataset is None:
@@ -275,7 +275,7 @@ def run_evaluation(
         run_id=run_id,
         status="completed",
         created_at=started_at,
-        completed_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(UTC),
         dataset_id=dataset.dataset_id,
         dataset_summary={
             **dataset.manifest.get("counts", {}),

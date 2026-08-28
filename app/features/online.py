@@ -12,7 +12,7 @@ feature vector is what prevents one.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 

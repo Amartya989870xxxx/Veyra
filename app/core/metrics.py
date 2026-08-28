@@ -45,7 +45,7 @@ class MetricsRegistry:
             series = sorted(self._histograms.get(key, []))
         if not series:
             return None
-        idx = min(len(series) - 1, max(0, int(round((pct / 100.0) * (len(series) - 1)))))
+        idx = min(len(series) - 1, max(0, round((pct / 100.0) * (len(series) - 1))))
         return series[idx]
 
     def snapshot(self) -> dict:
