@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { Activity, Menu, X } from 'lucide-react';
+import { Menu, X } from 'lucide-react';
 import { api } from '../../api/client';
 import type { HealthResponse } from '../../api/types';
 import { Button } from '../ui';
@@ -87,14 +87,15 @@ export function TopNav({
             style={{
               display: 'grid',
               placeItems: 'center',
-              width: 26,
-              height: 26,
-              borderRadius: 7,
-              background: 'var(--grad-brand)',
-              boxShadow: '0 0 20px rgba(255,46,76,0.45)',
+              width: 28,
+              height: 28,
+              borderRadius: 8,
+              overflow: 'hidden',
+              boxShadow: '0 0 16px rgba(59, 130, 246, 0.35)',
+              border: '1px solid rgba(255, 255, 255, 0.12)',
             }}
           >
-            <Activity size={14} color="#fff" />
+            <img src="/favicon-32x32.png" alt="Veyra logo" width={28} height={28} style={{ display: 'block', objectFit: 'cover' }} />
           </span>
           <span style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--text-md)', fontWeight: 700, letterSpacing: '0.01em' }}>VEYRA</span>
         </button>
