@@ -1,0 +1,238 @@
+@import './tokens.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  background: var(--bg-base);
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-sans);
+  overflow-x: clip;
+  font-size: var(--text-base);
+  line-height: 1.65;
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  text-wrap: balance;
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
+}
+
+img,
+svg,
+iframe {
+  max-width: 100%;
+}
+
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::selection {
+  background: rgba(249, 63, 40, 0.25);
+  color: var(--text-primary);
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #03050a;
+}
+::-webkit-scrollbar-thumb {
+  background: #1c2438;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2a3754;
+}
+
+/* Restrained Atmospheric Backdrop (No generic AI neon haze) */
+.veyra-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  contain: strict;
+}
+
+.veyra-backdrop .blob {
+  position: absolute;
+  display: block;
+  border-radius: 50%;
+  filter: blur(160px);
+  opacity: 0.16;
+  will-change: transform;
+}
+
+.veyra-backdrop .blob-1 {
+  width: clamp(350px, 45vw, 600px);
+  height: clamp(350px, 45vw, 600px);
+  top: -120px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: radial-gradient(circle, #1e3a8a 0%, #0c1c4d 60%, transparent 80%);
+}
+
+.veyra-backdrop .blob-2 {
+  width: 400px;
+  height: 400px;
+  top: 35%;
+  right: -80px;
+  background: radial-gradient(circle, rgba(37, 99, 235, 0.12) 0%, transparent 70%);
+}
+
+.veyra-backdrop .blob-3 {
+  width: 440px;
+  height: 440px;
+  bottom: 10%;
+  left: -100px;
+  background: radial-gradient(circle, rgba(249, 63, 40, 0.08) 0%, transparent 70%);
+}
+
+.veyra-backdrop .grain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.02;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+}
+
+.veyra-shell {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Layout Containers */
+.container {
+  width: 100%;
+  max-width: 1200px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: var(--sp-5);
+  padding-right: var(--sp-5);
+}
+
+.container-wide {
+  width: 100%;
+  max-width: 1360px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: var(--sp-5);
+  padding-right: var(--sp-5);
+}
+
+.container-narrow {
+  width: 100%;
+  max-width: 860px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: var(--sp-5);
+  padding-right: var(--sp-5);
+}
+
+/* Hairline Dividers */
+.hairline {
+  border: none;
+  height: 1px;
+  background: var(--border-subtle);
+  margin: 0;
+}
+
+/* Skip link */
+.skip-link {
+  position: absolute;
+  top: -100px;
+  left: var(--sp-4);
+  background: var(--brand);
+  color: #ffffff;
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--radius-sm);
+  font-weight: 700;
+  font-size: var(--text-sm);
+  z-index: 999;
+  transition: top 0.15s ease;
+}
+.skip-link:focus {
+  top: var(--sp-4);
+}
+
+/* Responsive grid rules */
+@media (max-width: 768px) {
+  .container,
+  .container-wide,
+  .container-narrow {
+    padding-left: var(--sp-4);
+    padding-right: var(--sp-4);
+  }
+}
+
+@keyframes veyra-cursor-blink {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes veyra-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.92);
+  }
+}
+

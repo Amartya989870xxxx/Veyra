@@ -1,23 +1,51 @@
-# Python
+# ---------------------------------------------------------------- Python
 __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
 venv/
+
+# Test / lint / type caches
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.hypothesis/
+.coverage
+htmlcov/
 
-# Environment
+# ---------------------------------------------------------- Node / frontend
+# frontend/.gitignore covers the rest; these are the ones that bite at the root.
+node_modules/
+frontend/dist/
+
+# Superseded frontend files parked during the v2 redesign. See frontend/.attic/README.md.
+frontend/.attic/
+
+# ------------------------------------------------------------- Environment
 .env
-.env.local
+.env.*
+!.env.example
 
-# Local database
+# --------------------------------------------------------- Local database
+# SQLite writes three files in WAL mode. Ignoring only *.db leaves the -wal
+# (often the largest of the three) staged on the next `git add .`.
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 
-# Generated artifacts — regenerate, don't commit
+# ------------------------------------------------- Private / local-only notes
+# Personal study and design notes. Kept locally, never published.
+.private-notes/
+
+# Generated benchmark reports. `scripts/generate_experiment_report.py` and
+# `scripts/run_benchmark.py` write these; regenerate rather than commit.
+research/BENCHMARK_RESULTS.md
+research/BENCHMARK_SMOKE_RUN.md
+
+# ------------------------------------------- Generated artifacts & reports
+# Regenerate these; never commit them.
 artifacts/
 reports/*.json
 
@@ -26,5 +54,8 @@ data/real/
 *.csv
 *.parquet
 
-# OS
+# --------------------------------------------------------------------- OS
 .DS_Store
+**/.DS_Store
+Thumbs.db
+research/experiment_results.json

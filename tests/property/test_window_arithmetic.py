@@ -1,6 +1,6 @@
 """Invariants on the 60s scoring grid.
 
-These are the three invariants named in `docs/ROADMAP.md` §1.2. They are property tests
+These are the three window-arithmetic invariants the system relies on. They are property tests
 rather than examples because the failures they guard against — an event counted twice, a
 window reaching one second into its own future — do not raise. They produce a number
 that is wrong by an amount no report will ever show.

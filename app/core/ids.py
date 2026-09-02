@@ -38,16 +38,23 @@ def request_id() -> str:
     return new_id("req")
 
 
-def case_id() -> str:
-    return new_id("case")
+def incident_id() -> str:
+    return new_id("inc")
+
+
+def scoped_incident_id(merchant_id: str, kind: str, window_end: object) -> str:
+    """A stable incident ID for one merchant's window.
+
+    Unlike :func:`incident_id`, this is derived rather than random. Scoring the same
+    merchant-window twice has to resolve to the same incident so that the incident store
+    upserts instead of accumulating a duplicate per re-score, which means the identifier
+    must be a function of what the incident *is* rather than of when it was created.
+    """
+    return f"inc_{stable_hash(f'{merchant_id}|{kind}|{window_end}')[:26]}"
 
 
 def run_id() -> str:
     return new_id("run")
-
-
-def campaign_id() -> str:
-    return new_id("camp")
 
 
 def stable_hash(payload: str) -> str:

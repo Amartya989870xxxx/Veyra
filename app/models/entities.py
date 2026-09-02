@@ -1,9 +1,12 @@
-"""ORM models for canonical entities and ingested events.
+"""Database models for the six purpose-built storage layers (Phase 1.4).
 
-Idempotency is enforced at the database level: ``ingested_events.event_id`` and
-``ingested_events.idempotency_key`` are unique, and each canonical record keys on its own
-natural synthetic ID. Application logic can be retried safely because the constraint,
-not the code path, is the guarantee (one-shot prompt §16).
+Each store has a distinct lifecycle, mutability, and retention policy:
+1. `raw_events`: Immutable, append-only store for canonical normalized events.
+2. `feature_store`: Window aggregates keyed on `(merchant_id, window_size, window_end)`.
+3. `baseline_store`: Versioned expected behavioral statistics (median & MAD) per merchant.
+4. `relationship_store`: Graph engine persistence with TTL'd entity-pair counters.
+5. `incident_store`: First-class incident lifecycle, exposure, and evidence.
+6. `eval_store`: Predictions, ground truth, and run metadata for reproducible evaluation.
 """
 
 from __future__ import annotations
@@ -11,181 +14,162 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Float, Index, Integer, String, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    Float,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, JSONType, Money, UtcDateTime, id_column, utcnow
+from app.schemas.enums import (
+    ActionTier,
+    BaselineConfidence,
+    IncidentStatus,
+    Severity,
+    SplitName,
+    WindowLabel,
+)
 
 
-class MerchantRow(Base):
-    __tablename__ = "merchants"
+class RawEventRow(Base):
+    """1. `raw_events`: Append-only immutable log of every ingested event."""
 
-    merchant_id: Mapped[str] = id_column(primary_key=True)
-    name: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    category: Mapped[str] = mapped_column(String(64), nullable=False)
-    risk_policy_id: Mapped[str] = mapped_column(String(64), default="policy_default_v1")
-    is_known: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
-
-
-class CustomerRow(Base):
-    __tablename__ = "customers"
-
-    customer_id: Mapped[str] = id_column(primary_key=True)
-    segment: Mapped[str] = mapped_column(String(32), default="retail")
-    home_country: Mapped[str] = mapped_column(String(2), default="IN")
-    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
-
-
-class AgentRow(Base):
-    __tablename__ = "agents"
-
-    agent_id: Mapped[str] = id_column(primary_key=True)
-    provider: Mapped[str] = mapped_column(String(64), default="synthetic")
-    application_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    trust_tier: Mapped[str] = mapped_column(String(32), default="standard")
-    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
-
-
-class AgentDelegationRow(Base):
-    __tablename__ = "agent_delegations"
-
-    delegation_id: Mapped[str] = id_column(primary_key=True)
-    customer_id: Mapped[str] = id_column(index=True)
-    agent_id: Mapped[str] = id_column(index=True)
-    purpose: Mapped[str] = mapped_column(String(64), default="general_purchase")
-    max_amount: Mapped[Decimal] = mapped_column(Money, nullable=False)
-    currency: Mapped[str] = mapped_column(String(3), default="INR")
-    allowed_categories: Mapped[list] = mapped_column(JSONType, default=list)
-    forbidden_categories: Mapped[list] = mapped_column(JSONType, default=list)
-    allowed_merchants: Mapped[list] = mapped_column(JSONType, default=list)
-    allowed_actions: Mapped[list] = mapped_column(JSONType, default=list)
-    merchant_policy: Mapped[str] = mapped_column(String(32), default="known_or_approved")
-    approval_required_above: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
-    issued_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
-
-
-class AgentSessionRow(Base):
-    __tablename__ = "agent_sessions"
-
-    session_id: Mapped[str] = id_column(primary_key=True)
-    agent_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
-    customer_id: Mapped[str] = id_column(index=True)
-    actor_type: Mapped[str] = mapped_column(String(16), default="AGENT")
-    device_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
-    network_fingerprint: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
-    started_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
-    ended_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
-
-
-class AgentActionRow(Base):
-    __tablename__ = "agent_actions"
-    __table_args__ = (
-        Index("ix_agent_actions_session_seq", "session_id", "sequence_number"),
-        Index("ix_agent_actions_agent_ts", "agent_id", "timestamp"),
-    )
-
-    action_id: Mapped[str] = id_column(primary_key=True)
-    agent_id: Mapped[str] = id_column()
-    session_id: Mapped[str] = id_column()
-    sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)
-    action_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    tool_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    merchant_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    sku_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    timestamp: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
-    action_metadata: Mapped[dict] = mapped_column(JSONType, default=dict)
-
-
-class OrderRow(Base):
-    __tablename__ = "orders"
-
-    order_id: Mapped[str] = id_column(primary_key=True)
-    merchant_id: Mapped[str] = id_column(index=True)
-    customer_id: Mapped[str] = id_column(index=True)
-    amount: Mapped[Decimal] = mapped_column(Money, nullable=False)
-    currency: Mapped[str] = mapped_column(String(3), default="INR")
-    sku_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    quantity: Mapped[int] = mapped_column(Integer, default=1)
-    created_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
-
-
-class TransactionRow(Base):
-    __tablename__ = "transactions"
-    __table_args__ = (
-        Index("ix_transactions_customer_ts", "customer_id", "timestamp"),
-        Index("ix_transactions_agent_ts", "agent_id", "timestamp"),
-        Index("ix_transactions_device_ts", "device_id", "timestamp"),
-        Index("ix_transactions_ts", "timestamp"),
-    )
-
-    transaction_id: Mapped[str] = id_column(primary_key=True)
-    merchant_id: Mapped[str] = id_column()
-    customer_id: Mapped[str] = id_column()
-    agent_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    session_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
-    order_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    delegation_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    amount: Mapped[Decimal] = mapped_column(Money, nullable=False)
-    currency: Mapped[str] = mapped_column(String(3), default="INR")
-    merchant_category: Mapped[str] = mapped_column(String(64), nullable=False)
-    sku_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
-    quantity: Mapped[int] = mapped_column(Integer, default=1)
-    coupon_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
-    coupon_value: Mapped[Decimal] = mapped_column(Money, default=Decimal("0"))
-    device_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    network_fingerprint: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
-    payment_method: Mapped[str] = mapped_column(String(32), default="upi")
-    instrument_fingerprint: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    retry_count: Mapped[int] = mapped_column(Integer, default=0)
-    status: Mapped[str] = mapped_column(String(32), default="ATTEMPTED")
-    actor_type: Mapped[str] = mapped_column(String(16), default="HUMAN")
-    timestamp: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
-    ingested_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
-
-
-class IngestedEventRow(Base):
-    """Append-only ledger of accepted events; the idempotency boundary."""
-
-    __tablename__ = "ingested_events"
-    __table_args__ = (
-        UniqueConstraint("idempotency_key", name="uq_ingested_events_idempotency_key"),
-        Index("ix_ingested_events_type_ts", "event_type", "timestamp"),
-    )
+    __tablename__ = "raw_events"
 
     event_id: Mapped[str] = id_column(primary_key=True)
-    event_type: Mapped[str] = mapped_column(String(48), nullable=False)
-    source: Mapped[str] = mapped_column(String(64), default="synthetic")
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    source: Mapped[str] = mapped_column(String(64), nullable=False, default="synthetic")
+    timestamp: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False, index=True)
     schema_version: Mapped[str] = mapped_column(String(16), nullable=False)
-    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
-    merchant_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False, unique=True, index=True)
+    merchant_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    payload: Mapped[dict] = mapped_column(JSONType, default=dict)
-    timestamp: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
-    received_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
+    payload: Mapped[dict] = mapped_column(JSONType, nullable=False)
+    ingested_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False, default=utcnow)
 
 
-class EntityRelationshipRow(Base):
-    """Canonical relationship store; the graph engine reads bounded windows from here."""
+class FeatureStoreRow(Base):
+    """2. `feature_store`: Window-aggregated features keyed by merchant, window size and timestamp."""
 
-    __tablename__ = "entity_relationships"
+    __tablename__ = "feature_store"
     __table_args__ = (
-        UniqueConstraint(
-            "source_type", "source_id", "target_type", "target_id", "relationship",
-            name="uq_entity_relationships_edge",
-        ),
-        Index("ix_entity_relationships_target", "target_type", "target_id"),
+        UniqueConstraint("merchant_id", "window_size", "window_end", name="uq_feature_merchant_window_ts"),
+        Index("ix_feature_merchant_ts", "merchant_id", "window_end"),
     )
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    source_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    source_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    target_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    target_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    relationship: Mapped[str] = mapped_column(String(48), nullable=False)
-    weight: Mapped[float] = mapped_column(Float, default=1.0)
-    first_seen: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
-    last_seen: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
-    observation_count: Mapped[int] = mapped_column(Integer, default=1)
+    id: Mapped[str] = id_column(primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    window_size: Mapped[str] = mapped_column(String(16), nullable=False)  # 1m, 5m, 15m, 1h
+    window_end: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
+    features: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
+    evidence: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False, default=utcnow)
+
+
+class BaselineStoreRow(Base):
+    """3. `baseline_store`: Versioned expected behavioral baselines and variability per merchant/hour."""
+
+    __tablename__ = "baseline_store"
+    __table_args__ = (
+        UniqueConstraint(
+            "merchant_id", "feature_id", "window_size", "hour_of_week", "version",
+            name="uq_baseline_merchant_feature_window_hour_ver",
+        ),
+        Index("ix_baseline_merchant_lookup", "merchant_id", "window_size", "hour_of_week"),
+    )
+
+    id: Mapped[str] = id_column(primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    feature_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    window_size: Mapped[str] = mapped_column(String(16), nullable=False)
+    hour_of_week: Mapped[int] = mapped_column(Integer, nullable=False)  # 0..167
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    expected_median: Mapped[float] = mapped_column(Float, nullable=False)
+    variability_mad: Mapped[float] = mapped_column(Float, nullable=False)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    confidence: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=BaselineConfidence.MEDIUM.value
+    )
+    fit_period_start: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+    fit_period_end: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False, default=utcnow)
+
+
+class RelationshipStoreRow(Base):
+    """4. `relationship_store`: Persistence layer for graph entity connections with TTL support."""
+
+    __tablename__ = "relationship_store"
+    __table_args__ = (
+        Index("ix_rel_merchant_entity_a", "merchant_id", "entity_type_a", "entity_id_a"),
+        Index("ix_rel_merchant_entity_b", "merchant_id", "entity_type_b", "entity_id_b"),
+        Index("ix_rel_expires_at", "expires_at"),
+    )
+
+    id: Mapped[str] = id_column(primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    entity_type_a: Mapped[str] = mapped_column(String(32), nullable=False)
+    entity_id_a: Mapped[str] = mapped_column(String(128), nullable=False)
+    entity_type_b: Mapped[str] = mapped_column(String(32), nullable=False)
+    entity_id_b: Mapped[str] = mapped_column(String(128), nullable=False)
+    co_occurrence_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    first_seen_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
+    window_end: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+
+
+class IncidentStoreRow(Base):
+    """5. `incident_store`: First-class incidents with lifecycle, exposure, and evidence."""
+
+    __tablename__ = "incident_store"
+    __table_args__ = (
+        Index("ix_incidents_merchant_status", "merchant_id", "status"),
+        Index("ix_incidents_timeline", "first_flag_time", "last_flag_time"),
+    )
+
+    incident_id: Mapped[str] = id_column(primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False, default=Severity.INFO.value)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default=IncidentStatus.OPEN.value)
+    action_tier: Mapped[str] = mapped_column(String(16), nullable=False, default=ActionTier.OBSERVE.value)
+    first_flag_time: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
+    last_flag_time: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
+    window_sizes: Mapped[list] = mapped_column(JSONType, nullable=False, default=list)
+    risk_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    exposure_amount: Mapped[Decimal] = mapped_column(Money, nullable=False, default=Decimal("0.00"))
+    baseline_confidence: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=BaselineConfidence.MEDIUM.value
+    )
+    evidence: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
+    explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False, default=utcnow)
+
+
+class EvalStoreRow(Base):
+    """6. `eval_store`: Predictions, ground truth, and run metadata for reproducible evaluation."""
+
+    __tablename__ = "eval_store"
+    __table_args__ = (
+        Index("ix_eval_run_split", "run_id", "split"),
+        Index("ix_eval_merchant_window", "merchant_id", "window_size", "window_end"),
+    )
+
+    eval_id: Mapped[str] = id_column(primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    split: Mapped[str] = mapped_column(String(32), nullable=False, default=SplitName.TEST.value)
+    merchant_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    window_size: Mapped[str] = mapped_column(String(16), nullable=False)
+    window_end: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
+    detector_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    predicted_score: Mapped[float] = mapped_column(Float, nullable=False)
+    action_tier: Mapped[str] = mapped_column(String(16), nullable=False)
+    ground_truth_label: Mapped[str] = mapped_column(String(32), nullable=False, default=WindowLabel.NORMAL.value)
+    scenario_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    loss_incurred: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False, default=utcnow)

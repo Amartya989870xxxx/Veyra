@@ -1,8 +1,8 @@
 """Canonical event envelope.
 
 Every externally accepted event carries ``event_id``, ``event_type``, ``source``,
-``timestamp`` and ``schema_version`` (one-shot prompt §5). ``idempotency_key`` defaults
-to ``event_id`` so replay is safe even when a client omits it.
+``timestamp`` and ``schema_version``. ``idempotency_key`` defaults to ``event_id`` so
+replay is safe even when a client omits it.
 """
 
 from __future__ import annotations
@@ -13,8 +13,8 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.core.versions import SCHEMA_VERSION
-from app.schemas.entities import AgentAction, AgentDelegation, AgentSession, Order, Transaction
-from app.schemas.enums import EventType, PaymentStatus
+from app.schemas.entities import Dispute, OrderOutcome, PaymentAttempt, PaymentOutcome, Refund
+from app.schemas.enums import EventType
 
 
 class EventEnvelope(BaseModel):
@@ -31,62 +31,53 @@ class EventEnvelope(BaseModel):
     merchant_id: str | None = Field(default=None, max_length=128)
 
     @model_validator(mode="after")
-    def _default_idempotency(self) -> EventEnvelope:
+    def _default_idempotency_and_merchant(self) -> EventEnvelope:
         if not self.idempotency_key:
             object.__setattr__(self, "idempotency_key", self.event_id)
         return self
 
 
-class TransactionAttemptEvent(EventEnvelope):
-    event_type: Literal[EventType.TRANSACTION_ATTEMPT] = EventType.TRANSACTION_ATTEMPT
-    transaction: Transaction
+class PaymentAttemptEvent(EventEnvelope):
+    event_type: Literal[EventType.PAYMENT_ATTEMPT] = EventType.PAYMENT_ATTEMPT
+    payment_attempt: PaymentAttempt
 
-    model_config = ConfigDict(
-        extra="forbid",
-        json_schema_extra={
-            "examples": [
-                {
-                    "event_id": "evt_0001",
-                    "event_type": "TRANSACTION_ATTEMPT",
-                    "source": "synthetic",
-                    "timestamp": "2026-02-14T10:31:04Z",
-                    "schema_version": SCHEMA_VERSION,
-                    "transaction": Transaction.model_config["json_schema_extra"]["examples"][0],
-                }
-            ]
-        },
-    )
+    @model_validator(mode="after")
+    def _sync_merchant_and_timestamp(self) -> PaymentAttemptEvent:
+        if not self.merchant_id:
+            object.__setattr__(self, "merchant_id", self.payment_attempt.merchant_id)
+        return self
 
 
 class PaymentResultEvent(EventEnvelope):
     event_type: Literal[EventType.PAYMENT_RESULT] = EventType.PAYMENT_RESULT
-    transaction_id: str = Field(..., max_length=128)
-    status: PaymentStatus
-    failure_reason: str | None = Field(default=None, max_length=128)
+    outcome: PaymentOutcome
 
 
-class AgentActionEvent(EventEnvelope):
-    event_type: Literal[EventType.AGENT_ACTION] = EventType.AGENT_ACTION
-    action: AgentAction
+class RefundEvent(EventEnvelope):
+    event_type: Literal[EventType.REFUND] = EventType.REFUND
+    refund: Refund
 
 
-class SessionStartedEvent(EventEnvelope):
-    event_type: Literal[EventType.SESSION_STARTED] = EventType.SESSION_STARTED
-    session: AgentSession
+class DisputeEvent(EventEnvelope):
+    """Dispute event. Label source ONLY per ADR-004."""
+
+    event_type: Literal[EventType.DISPUTE] = EventType.DISPUTE
+    dispute: Dispute
 
 
-class DelegationCreatedEvent(EventEnvelope):
-    event_type: Literal[EventType.DELEGATION_CREATED] = EventType.DELEGATION_CREATED
-    delegation: AgentDelegation
+class OrderStatusEvent(EventEnvelope):
+    event_type: Literal[EventType.ORDER_STATUS] = EventType.ORDER_STATUS
+    order: OrderOutcome
 
-
-class OrderCreatedEvent(EventEnvelope):
-    event_type: Literal[EventType.ORDER_CREATED] = EventType.ORDER_CREATED
-    order: Order
+    @model_validator(mode="after")
+    def _sync_merchant(self) -> OrderStatusEvent:
+        if not self.merchant_id:
+            object.__setattr__(self, "merchant_id", self.order.merchant_id)
+        return self
 
 
 CanonicalEvent = Annotated[
-    TransactionAttemptEvent | PaymentResultEvent | AgentActionEvent | SessionStartedEvent | DelegationCreatedEvent | OrderCreatedEvent,
+    PaymentAttemptEvent | PaymentResultEvent | RefundEvent | DisputeEvent | OrderStatusEvent,
     Field(discriminator="event_type"),
 ]
 

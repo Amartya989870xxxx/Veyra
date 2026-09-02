@@ -1,140 +1,134 @@
-"""Feature engine: assembles every feature group into one versioned, hashable snapshot.
+"""Unified feature engine for Veyra v2 (Phase 3.1 & ADR-004).
 
-The snapshot hash is what makes a decision reproducible. Given the hash, the feature
-version and the stored snapshot, a past decision can be recomputed exactly.
-
-Feature *groups* are first-class because the central experiment is an ablation:
-``TRANSACTION_ONLY`` is what a conventional payment-risk model sees; ``FULL`` adds the
-agent, authorization, graph and temporal signals. Both run through identical code.
+Coordinates:
+- Window statistical features (Families A through I)
+- Relationship graph metrics (Family J)
+- Robust baseline deviations (f_dev twins)
+- Strict downstream anti-leakage barriers (ADR-004)
 """
 
 from __future__ import annotations
 
-import json
-import time
 from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Sequence
 
-from app.core.ids import stable_hash
-from app.core.versions import FEATURE_VERSION
-from app.features.authorization import (
-    AUTHORIZATION_FEATURE_NAMES,
-    AuthorizationViolation,
-    authorization_features,
-    check_authorization,
-)
-from app.features.baselines import DEFAULT_BASELINES, Baselines
-from app.features.behavior import BEHAVIOR_FEATURE_NAMES, behavior_features
-from app.features.context import RiskContext
-from app.features.temporal import TEMPORAL_FEATURE_NAMES, temporal_features
-from app.features.transaction import TRANSACTION_FEATURE_NAMES, transaction_features
-from app.graph.base import ClusterSummary
-from app.graph.networkx_engine import GRAPH_FEATURE_NAMES, NetworkXGraphEngine
-
-FEATURE_GROUPS: dict[str, list[str]] = {
-    "transaction": TRANSACTION_FEATURE_NAMES,
-    "behavior": BEHAVIOR_FEATURE_NAMES,
-    "authorization": AUTHORIZATION_FEATURE_NAMES,
-    "graph": GRAPH_FEATURE_NAMES,
-    "temporal": TEMPORAL_FEATURE_NAMES,
-}
-
-ALL_FEATURE_NAMES: list[str] = [
-    name for group in ("transaction", "behavior", "authorization", "graph", "temporal")
-    for name in FEATURE_GROUPS[group]
-]
-
-# The two arms of the central experiment.
-TRANSACTION_ONLY_FEATURES = list(TRANSACTION_FEATURE_NAMES)
-FULL_FEATURES = list(ALL_FEATURE_NAMES)
-
-# Component feature sets. Each risk component is trained on its own slice so the persisted
-# component scores are genuinely independent readings rather than five views of one model.
-COMPONENT_FEATURES = {
-    "transaction_risk": TRANSACTION_FEATURE_NAMES,
-    "behavior_risk": BEHAVIOR_FEATURE_NAMES,
-    "campaign_risk": GRAPH_FEATURE_NAMES + TEMPORAL_FEATURE_NAMES,
-}
+from app.features.aggregator import WindowAgg, compute_window_features_dict
+from app.features.baselines import BaselineEngine
+from app.graph.engine import GraphEngine
+from app.registry import assert_no_downstream, load_features
+from app.schemas.entities import PaymentAttempt
+from app.schemas.enums import BaselineConfidence
+from app.windows import WindowSize
+from data.generators.timeline import AnnotatedTransaction
 
 
 @dataclass
-class FeatureSnapshot:
-    values: dict[str, float]
-    violations: list[AuthorizationViolation] = field(default_factory=list)
-    cluster: ClusterSummary | None = None
-    feature_version: str = FEATURE_VERSION
-    snapshot_hash: str = ""
-    latency_ms: dict[str, float] = field(default_factory=dict)
-    degraded: list[str] = field(default_factory=list)
-
-    def vector(self, names: list[str]) -> list[float]:
-        return [float(self.values.get(name, 0.0)) for name in names]
-
-    def group(self, name: str) -> dict[str, float]:
-        return {k: self.values[k] for k in FEATURE_GROUPS[name] if k in self.values}
+class WindowFeatureVector:
+    merchant_id: str
+    window_size: WindowSize
+    window_end: datetime
+    all_features: dict[str, float]
+    model_features: dict[str, float]
+    evidence: dict[str, float]
+    baseline_confidence: BaselineConfidence
 
 
 class FeatureEngine:
-    """Deterministic feature extraction. Same code path online and offline."""
-
-    version = FEATURE_VERSION
+    """Computes complete feature vector for a merchant detection window."""
 
     def __init__(
         self,
-        graph_engine: NetworkXGraphEngine | None = None,
-        baselines: Baselines | None = None,
+        baseline_engine: BaselineEngine | None = None,
+        graph_engine: GraphEngine | None = None,
     ) -> None:
-        self.graph_engine = graph_engine or NetworkXGraphEngine()
-        self.baselines = baselines or DEFAULT_BASELINES
+        self.baseline_engine = baseline_engine or BaselineEngine()
+        self.graph_engine = graph_engine or GraphEngine()
+        self.registry = load_features()
 
-    def extract(self, ctx: RiskContext) -> FeatureSnapshot:
-        latency: dict[str, float] = {}
-        values: dict[str, float] = {}
-
-        started = time.perf_counter()
-        values.update(transaction_features(ctx, self.baselines))
-        latency["transaction"] = (time.perf_counter() - started) * 1000
-
-        started = time.perf_counter()
-        values.update(behavior_features(ctx))
-        latency["behavior"] = (time.perf_counter() - started) * 1000
-
-        started = time.perf_counter()
-        violations = check_authorization(ctx)
-        values.update(authorization_features(ctx, violations))
-        latency["authorization"] = (time.perf_counter() - started) * 1000
-
-        started = time.perf_counter()
-        cluster: ClusterSummary | None = None
-        try:
-            values.update(self.graph_engine.extract_features(ctx))
-            cluster = self.graph_engine.build_context(ctx)
-        except Exception:
-            # The graph layer is the most complex component and the least essential to a
-            # safe decision. If it fails we mark it unavailable and leave its features
-            # absent rather than filling in zeros that read as "no cluster here".
-            ctx.mark_degraded("graph_engine")
-            for name in GRAPH_FEATURE_NAMES:
-                values.setdefault(name, 0.0)
-        latency["graph"] = (time.perf_counter() - started) * 1000
-
-        started = time.perf_counter()
-        values.update(temporal_features(ctx))
-        latency["temporal"] = (time.perf_counter() - started) * 1000
-
-        if ctx.neighbourhood_truncated:
-            ctx.mark_degraded("graph_window_truncated")
-
-        snapshot_hash = stable_hash(
-            json.dumps(
-                {"v": FEATURE_VERSION, "f": {k: round(v, 6) for k, v in sorted(values.items())}},
-                sort_keys=True,
-            )
+    def extract_window_features(
+        self,
+        merchant_id: str,
+        window_size: WindowSize,
+        window_end: datetime,
+        transactions: Sequence[AnnotatedTransaction | PaymentAttempt],
+        preceding_rate: float = 0.0,
+        cross_merchant_entity_map: dict[str, set[str]] | None = None,
+    ) -> WindowFeatureVector:
+        # 1. Aggregate statistical features for Families A-I
+        agg = WindowAgg(
+            merchant_id=merchant_id,
+            window_size=window_size,
+            window_end=window_end,
+            transactions=list(transactions),
+            preceding_window_txn_rate=preceding_rate,
         )
-        return FeatureSnapshot(
-            values=values,
-            violations=violations,
-            cluster=cluster,
-            snapshot_hash=snapshot_hash,
-            latency_ms=latency,
-            degraded=list(ctx.degraded),
+        raw_stats = compute_window_features_dict(agg)
+
+        # 2. Extract Family J graph features
+        graph_res = self.graph_engine.compute_window_graph_features(
+            transactions=transactions,
+            cross_merchant_entity_map=cross_merchant_entity_map,
+        )
+        graph_stats = graph_res.to_dict()
+
+        # Combine all base features
+        base_features: dict[str, float] = {**raw_stats, **graph_stats}
+
+        # 3. Compute deviation twins for declared features
+        how = window_end.weekday() * 24 + window_end.hour
+        deviation_twins: dict[str, float] = {}
+        confidences: list[BaselineConfidence] = []
+
+        for fid, val in base_features.items():
+            spec = self.registry.get(fid)
+            if spec and spec.deviation_twin:
+                dev_val, conf = self.baseline_engine.compute_deviation_twin(
+                    merchant_id=merchant_id,
+                    feature_id=fid,
+                    value=val,
+                    window_size=window_size,
+                    hour_of_week=how,
+                    # Arms the temporal guard: a baseline fitted on history that extends
+                    # past this window is rejected rather than silently applied.
+                    window_end=window_end,
+                )
+                deviation_twins[f"{fid}_dev"] = dev_val
+                confidences.append(conf)
+
+        all_features = {**base_features, **deviation_twins}
+
+        # 4. Filter model inputs vs evidence-only vs downstream-only
+        model_features: dict[str, float] = {}
+        evidence: dict[str, float] = {}
+
+        for k, v in all_features.items():
+            base_k = k[:-4] if k.endswith("_dev") else k
+            spec = self.registry.get(base_k)
+            if not spec:
+                continue
+
+            if spec.evidence_only:
+                evidence[k] = v
+            elif spec.is_model_input:
+                model_features[k] = v
+
+        # 5. Enforce ADR-004 downstream barrier on model feature keys
+        assert_no_downstream(list(model_features.keys()))
+
+        # Determine overall baseline confidence (lowest among key features)
+        overall_conf = BaselineConfidence.HIGH
+        if any(c is BaselineConfidence.LOW for c in confidences):
+            overall_conf = BaselineConfidence.LOW
+        elif any(c is BaselineConfidence.MEDIUM for c in confidences):
+            overall_conf = BaselineConfidence.MEDIUM
+
+        return WindowFeatureVector(
+            merchant_id=merchant_id,
+            window_size=window_size,
+            window_end=window_end,
+            all_features=all_features,
+            model_features=model_features,
+            evidence=evidence,
+            baseline_confidence=overall_conf,
         )

@@ -53,21 +53,24 @@ line-length = 100
 target-version = "py311"
 exclude = ["alembic/versions"]
 
-# v1 modules awaiting their rewrite phase. This list is the shrinking to-do of the
-# migration, not a permanent exemption: a phase deletes its own entries here as it
-# rewrites the module, and the entry cannot be re-added. Everything not listed --
-# app/core, app/api, app/windows.py, tests/, research/ -- is lint-clean today and stays
-# that way.
+# Modules still carrying v1-era lint debt. This list is a shrinking to-do, not a
+# permanent exemption: delete an entry once its module is clean.
+#
+# Entries for app/risk/, app/intent/ and app/schemas/risk.py were removed because
+# those paths no longer exist -- they were silencing nothing.
+#
+# NOTE: the rest of the tree is NOT lint-clean (an earlier version of this comment
+# claimed it was). `ruff check .` reports ~409 findings, mostly E501 line length
+# and F401 unused imports. They are not auto-fixed here because F401 in this
+# codebase can be load-bearing -- SQLAlchemy model registration and __init__
+# re-exports both rely on imports that look unused. See README "Known gaps".
 extend-exclude = [
-    "app/schemas/entities.py",   # Phase 1.3 - payment-centric rewrite
-    "app/schemas/events.py",     # Phase 1.3 - payment-centric rewrite
-    "app/schemas/risk.py",       # Phase 1.3 - becomes the incident schema
-    "app/ingestion/service.py",  # Phase 1.3 - repointed at payment events
-    "app/features/",             # Phase 3 - rewritten as families A-J
-    "app/graph/",                # Phase 3 - extended for per-window degree structure
-    "app/risk/",                 # Phase 4 - Baseline A/B/C
-    "app/evaluation/",           # Phase 5 - temporal splits, incident metrics, gates
-    "app/intent/",               # Phase 6 - becomes app/explain with a grounding guard
+    "app/schemas/entities.py",   # payment-centric rewrite pending
+    "app/schemas/events.py",     # payment-centric rewrite pending
+    "app/ingestion/service.py",  # repointed at payment events
+    "app/features/",             # families A-J rewrite
+    "app/graph/",                # per-window degree structure
+    "app/evaluation/",           # temporal splits, incident metrics, gates
 ]
 
 [tool.ruff.lint]

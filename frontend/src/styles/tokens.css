@@ -1,0 +1,118 @@
+/* Veyra Design Tokens
+   Atmospheric deep midnight-navy black, high-contrast crisp white typography,
+   signature coral-red action accents (#f93f28), and Vercel-grade technical monochrome surfaces.
+*/
+
+:root {
+  /* --- surfaces ------------------------------------------------------- */
+  --bg-base: #060913;
+  --bg-sunken: #03050a;
+  --bg-raised: #0a0e1c;
+  --surface-1: #0e1426;
+  --surface-2: #141c33;
+  --surface-3: #1a2442;
+
+  /* Vercel-style clean dark surfaces for console/app views */
+  --vercel-bg: #000000;
+  --vercel-surface-1: #0a0a0a;
+  --vercel-surface-2: #121212;
+  --vercel-surface-3: #1a1a1a;
+
+  /* Glass: Translucent atmospheric blur */
+  --glass: rgba(14, 20, 38, 0.65);
+  --glass-strong: rgba(10, 14, 28, 0.88);
+  --glass-edge: rgba(255, 255, 255, 0.08);
+  --glass-lip: rgba(255, 255, 255, 0.15);
+
+  /* --- text ----------------------------------------------------------- */
+  --text-primary: #ffffff;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+
+  /* --- brand: Coral-red action accent --------------------------------- */
+  --brand: #f93f28;
+  --brand-bright: #ff5a43;
+  --brand-dim: #d92d17;
+  --brand-wash: rgba(249, 63, 40, 0.12);
+  --brand-line: rgba(249, 63, 40, 0.35);
+
+  /* --- intelligence: royal azure / cyan accent ------------------------ */
+  --accent: #2563eb;
+  --accent-bright: #3b82f6;
+  --accent-dim: #1d4ed8;
+  --accent-wash: rgba(37, 99, 235, 0.12);
+  --accent-line: rgba(37, 99, 235, 0.3);
+
+  /* --- gradients (restrained, non-generic) ----------------------------- */
+  --grad-brand: linear-gradient(135deg, #f93f28 0%, #ff5a43 100%);
+  --grad-hero-glow: radial-gradient(circle at 50% -10%, rgba(30, 58, 138, 0.22) 0%, rgba(6, 9, 19, 0) 70%);
+  --grad-card-glow: radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0) 100%);
+
+  /* --- semantic risk tiers (flat, distinct) ---------------------------- */
+  --tier-observe: #10b981;
+  --tier-observe-wash: rgba(16, 185, 129, 0.12);
+  --tier-alert: #3b82f6;
+  --tier-alert-wash: rgba(59, 130, 246, 0.12);
+  --tier-review: #f59e0b;
+  --tier-review-wash: rgba(245, 158, 11, 0.12);
+  --tier-restrict: #f93f28;
+  --tier-restrict-wash: rgba(249, 63, 40, 0.12);
+
+  /* --- borders -------------------------------------------------------- */
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border: rgba(255, 255, 255, 0.14);
+  --border-strong: rgba(255, 255, 255, 0.24);
+  --vercel-border: #222222;
+
+  /* --- typography (comfortable, readable sizing) ----------------------- */
+  --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Lora', Georgia, 'Times New Roman', serif;
+  --font-serif: 'Lora', Georgia, serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --text-xs: 12px;
+  --text-sm: 14px;
+  --text-base: 16px;
+  --text-md: 18px;
+  --text-lg: 20px;
+  --text-xl: clamp(22px, 2.6vw, 28px);
+  --text-2xl: clamp(28px, 3.8vw, 40px);
+  --text-3xl: clamp(34px, 4.8vw, 52px);
+  --text-4xl: clamp(40px, 5.8vw, 64px);
+  --text-hero: clamp(38px, 5.2vw, 64px);
+
+  /* --- spacing & layout ----------------------------------------------- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+  --sp-8: 64px;
+  --sp-9: clamp(56px, 8vw, 96px);
+  --sp-10: clamp(80px, 11vw, 140px);
+
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow: 0 12px 36px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.7);
+
+  --nav-h: 64px;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

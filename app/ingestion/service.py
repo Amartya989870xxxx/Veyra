@@ -1,15 +1,8 @@
-"""Event ingestion, normalization and idempotency.
+"""Event ingestion, normalization and idempotency for Veyra v2.
 
-Idempotency is enforced in two places, and the order matters:
-
-1. A Redis ``SET NX`` claim is a *fast path* only. It can be wrong when Redis is down, and
-   the code assumes it can be.
-2. A unique constraint on ``ingested_events.idempotency_key`` is the actual guarantee. A
-   duplicate surfaces as an ``IntegrityError``, which is caught and reported as a duplicate
-   rather than an error.
-
-This ordering means a Redis outage degrades throughput, never correctness: the same event
-sent twice still produces one transaction, one decision and one campaign effect.
+Idempotency is enforced in two places:
+1. A Redis ``SET NX`` claim is a fast path.
+2. A unique constraint on ``raw_events.idempotency_key`` is the authoritative guarantee.
 """
 
 from __future__ import annotations
@@ -25,17 +18,17 @@ from app.core.logging import get_logger
 from app.core.metrics import EVENTS_DUPLICATE_TOTAL, EVENTS_INGESTED_TOTAL, METRICS
 from app.core.redis_client import HotStateClient, get_hot_state
 from app.core.versions import SCHEMA_VERSION
-from app.models.entities import IngestedEventRow
+from app.models.entities import RawEventRow
+from app.models.repositories import RawEventsRepository
 from app.schemas.events import (
-    AgentActionEvent,
-    DelegationCreatedEvent,
+    CanonicalEvent,
+    DisputeEvent,
     EventIngestResult,
-    OrderCreatedEvent,
+    OrderStatusEvent,
+    PaymentAttemptEvent,
     PaymentResultEvent,
-    SessionStartedEvent,
-    TransactionAttemptEvent,
+    RefundEvent,
 )
-from app.transactions import repository as repo
 
 log = get_logger(__name__)
 
@@ -55,11 +48,11 @@ class IngestionService:
         self.hot_state = hot_state or get_hot_state()
 
     @staticmethod
-    def _payload_of(event) -> dict:
+    def _payload_of(event: CanonicalEvent) -> dict:
         return event.model_dump(mode="json")
 
-    async def ingest(self, session: AsyncSession, event) -> IngestOutcome:
-        """Validate, dedupe and persist one canonical event."""
+    async def ingest(self, session: AsyncSession, event: CanonicalEvent) -> IngestOutcome:
+        """Validate, dedupe and persist one canonical event into raw_events."""
         if event.schema_version not in SUPPORTED_SCHEMA_VERSIONS:
             return IngestOutcome(
                 EventIngestResult(
@@ -77,20 +70,21 @@ class IngestionService:
             f"veyra:dedupe:{key}", event.event_id, DEDUPE_TTL_SECONDS
         )
         if not claimed:
-            # The fast path says duplicate. Confirm against the database, because a Redis
-            # key can outlive a rolled-back transaction and we must not drop a real event.
-            if await session.get(IngestedEventRow, event.event_id):
+            # Fast path indicates potential duplicate; verify in database
+            if await RawEventsRepository.get_by_idempotency_key(session, key):
                 METRICS.increment(EVENTS_DUPLICATE_TOTAL)
                 return IngestOutcome(
                     EventIngestResult(
-                        event_id=event.event_id, accepted=False, duplicate=True,
+                        event_id=event.event_id,
+                        accepted=False,
+                        duplicate=True,
                         reason="event already ingested",
                     ),
                     degraded=degraded,
                 )
 
         payload = self._payload_of(event)
-        row = IngestedEventRow(
+        row = RawEventRow(
             event_id=event.event_id,
             event_type=str(event.event_type),
             source=event.source,
@@ -101,60 +95,48 @@ class IngestionService:
             payload=payload,
             timestamp=event.timestamp,
         )
+
         session.add(row)
         try:
             await session.flush()
         except IntegrityError:
-            # The authoritative duplicate check. This is the guarantee, not the Redis claim.
             await session.rollback()
             METRICS.increment(EVENTS_DUPLICATE_TOTAL)
             return IngestOutcome(
                 EventIngestResult(
-                    event_id=event.event_id, accepted=False, duplicate=True,
+                    event_id=event.event_id,
+                    accepted=False,
+                    duplicate=True,
                     reason="event already ingested",
                 ),
                 degraded=degraded,
             )
 
-        transaction_id = await self._apply(session, event)
+        txn_id = self._extract_transaction_id(event)
         METRICS.increment(EVENTS_INGESTED_TOTAL, event_type=str(event.event_type))
         return IngestOutcome(
             EventIngestResult(event_id=event.event_id, accepted=True),
-            transaction_id=transaction_id,
+            transaction_id=txn_id,
             degraded=degraded,
         )
 
-    async def _apply(self, session: AsyncSession, event) -> str | None:
-        """Project a canonical event onto the domain tables."""
-        if isinstance(event, TransactionAttemptEvent):
-            await repo.save_transaction(session, event.transaction)
-            return event.transaction.transaction_id
-
+    @staticmethod
+    def _extract_transaction_id(event: CanonicalEvent) -> str | None:
+        if isinstance(event, PaymentAttemptEvent):
+            return event.payment_attempt.transaction_id
         if isinstance(event, PaymentResultEvent):
-            row = await repo.get_transaction(session, event.transaction_id)
-            if row is not None:
-                row.status = str(event.status)
-            return event.transaction_id
-
-        if isinstance(event, AgentActionEvent):
-            await repo.save_action(session, event.action)
+            return event.outcome.transaction_id
+        if isinstance(event, RefundEvent):
+            return event.refund.transaction_id
+        if isinstance(event, DisputeEvent):
+            return event.dispute.transaction_id
+        if isinstance(event, OrderStatusEvent):
             return None
-
-        if isinstance(event, SessionStartedEvent):
-            await repo.save_session(session, event.session)
-            return None
-
-        if isinstance(event, DelegationCreatedEvent):
-            await repo.save_delegation(session, event.delegation)
-            return None
-
-        if isinstance(event, OrderCreatedEvent):
-            await repo.save_order(session, event.order)
-            return None
-
         return None
 
-    async def ingest_batch(self, session: AsyncSession, events: list) -> list[IngestOutcome]:
+    async def ingest_batch(
+        self, session: AsyncSession, events: list[CanonicalEvent]
+    ) -> list[IngestOutcome]:
         outcomes = []
         for event in events:
             outcomes.append(await self.ingest(session, event))

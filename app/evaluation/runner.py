@@ -1,314 +1,260 @@
-"""End-to-end evaluation runner.
+"""Comparative evaluation runner across temporal splits (Phase 5.1 & 5.2).
 
-Protocol, and the discipline behind it:
-
-1. Load (or generate) a benchmark and split it **by group**, stratified by scenario.
-2. Fit population baselines on **train only**.
-3. Extract features in one chronological, past-only pass.
-4. Train the model bundle on **train only**.
-5. Choose each detector's operating point on **validation**, by minimum expected loss under
-   a review-capacity cap.
-6. Apply those frozen thresholds to the **holdout**, once, and report.
-
-The holdout is passed to a tuner at no point in this file. Every detector — including both
-baselines — gets its own tuned operating point, so the comparison is between well-configured
-systems rather than between Veyra and a strawman.
+Executes Detectors A, B, and C strictly adhering to the past-only protocol:
+- Baselines and models fit ONCE on TRAIN
+- Operating thresholds tuned on VALIDATION
+- Scored ONCE on frozen TEST
 """
 
 from __future__ import annotations
 
-import json
-import time
-from collections import defaultdict
-from datetime import UTC, datetime
-from pathlib import Path
-
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Sequence
 import numpy as np
 
-from app.core.config import get_settings
-from app.core.ids import run_id as new_run_id
-from app.core.logging import get_logger
-from app.evaluation.dataset import Dataset, SplitResult, load_dataset, split_dataset
-from app.evaluation.detectors import RulesDetector, TransactionMLDetector, VeyraDetector
-from app.evaluation.metrics import (
-    calibration_error,
-    choose_operating_point,
-    classification_metrics,
-    cost_model_from_settings,
-    decisions_from_scores,
-    expected_loss,
-    threshold_sweep,
+from app.decision.operating_point import OperatingThresholds, choose_operating_thresholds
+from app.decision.policy import DecisionPolicy
+from app.evaluation.incidents import (
+    FlaggedWindowRecord,
+    GroundTruthIncident,
+    IncidentMatchingResults,
+    assemble_predicted_incidents,
+    match_incidents,
 )
-from app.evaluation.scoring import FeatureFrame, extract_features, split_frame
-from app.evaluation.trainer import train_bundle
-from app.features.baselines import Baselines
-from app.risk.models import ModelBundle
-from app.schemas.enums import Decision, SplitName
-from app.schemas.evaluation import (
-    CostModel,
-    DetectorResult,
-    EvaluationRunResponse,
-    SliceMetrics,
-    ThresholdPoint,
-)
-
-log = get_logger(__name__)
-
-MAX_REVIEW_RATE = 0.25
-"""Review-capacity cap used when choosing an operating point. Reviews are cheap per unit in
-this cost model and prevent all loss, so an unconstrained optimiser would simply review
-everything — an operating point no risk team could actually staff."""
+from app.evaluation.indexing import TransactionWindowIndex
+from app.evaluation.metrics import WindowMetrics, compute_window_metrics
+from app.features.baselines import fit_baselines_from_window_history
+from app.features.engine import FeatureEngine
+from app.models_ml.base import BaseDetector
+from app.models_ml.contextual import ContextualMLDetector
+from app.models_ml.fusion import VeyraFusionDetector
+from app.models_ml.volume import VolumeOnlyDetector
+from app.schemas.enums import SplitName, WindowLabel
+from app.windows import WindowSize
+from data.generators.pipeline import SyntheticDataset
 
 
-def _slice_metrics(
-    frame: FeatureFrame, scores: np.ndarray, decisions: list[str]
-) -> list[SliceMetrics]:
-    """Per-population breakdowns. Hard negatives and legitimate automation come first,
-    because those are where this system is most likely to be quietly harmful."""
-    flagged = np.asarray([0 if d == Decision.ALLOW else 1 for d in decisions])
-    slices: list[SliceMetrics] = []
+@dataclass
+class DetectorBenchmarkResult:
+    detector_name: str
+    window_metrics: WindowMetrics
+    incident_metrics: IncidentMatchingResults
+    thresholds: OperatingThresholds
+    false_alerts_per_merchant_day: float
+    hard_negative_fp_counts: dict[str, int]
+    expected_financial_loss: float
 
-    def add(name: str, mask: np.ndarray, note: str | None = None) -> None:
-        if not mask.any():
-            return
-        slices.append(
-            SliceMetrics(
-                slice_name=name,
-                count=int(mask.sum()),
-                metrics=classification_metrics(
-                    frame.labels[mask], flagged[mask],
-                    scores[mask] if len(set(frame.labels[mask].tolist())) == 2 else None,
-                ),
-                note=note,
+
+@dataclass
+class BenchmarkSuiteResults:
+    results_by_detector: dict[str, DetectorBenchmarkResult]
+    test_start: datetime
+    test_end: datetime
+    n_merchants: int
+    n_test_windows: int
+    n_ground_truth_attack_incidents: int = 0
+    """How many distinct (merchant, attack-scenario) incidents actually landed in the
+    TEST split. Recall/precision computed over a handful of incidents is not a
+    statistically meaningful rate — the report must show this number next to any
+    recall percentage, not just the percentage."""
+    hard_negative_population: dict[str, int] = field(default_factory=dict)
+    """Count of TEST windows whose dominant scenario is each hard-negative (LEGIT_SPIKE)
+    scenario id actually observed in the split. A scenario absent from this dict was not
+    exercised in TEST at all — reporting "0 false positives" for it would be reporting
+    that nothing happened, not that detection succeeded, and the report must say so."""
+
+
+class EvaluationRunner:
+    """Orchestrates temporal split benchmark evaluation."""
+
+    def __init__(self) -> None:
+        pass
+
+    def run_benchmark(
+        self,
+        dataset: SyntheticDataset,
+        review_capacity_cap: float = 0.15,
+    ) -> BenchmarkSuiteResults:
+        # 1. Split window labels and transactions temporally
+        train_labels = [w for w in dataset.window_labels if dataset.split_for_timestamp(w.window_end) == SplitName.TRAIN]
+        val_labels = [w for w in dataset.window_labels if dataset.split_for_timestamp(w.window_end) == SplitName.VALIDATION]
+        test_labels = [w for w in dataset.window_labels if dataset.split_for_timestamp(w.window_end) == SplitName.TEST]
+
+        # 2. Extract features per window using past-only history.
+        #
+        # Two passes, and the order is the temporal contract:
+        #   pass 1  raw features for TRAIN windows only (no baselines exist yet)
+        #   fit     168h median/MAD baselines from those TRAIN features
+        #   freeze  the fitted parameters are never recomputed after this point
+        #   pass 2  re-extract TRAIN (in-sample transform) and extract VAL/TEST with the
+        #           frozen engine, which refuses any baseline reaching past its window
+        #
+        # Before this, both the evaluation runner and the production ScoringService
+        # constructed `FeatureEngine()` with an unfitted `BaselineEngine`, which made
+        # every `_dev` twin equal `(value - 0.0) / max(1e-4, 1.0)` — a duplicate column
+        # of its raw feature. The MAD baseline was inert everywhere it was claimed to
+        # matter.
+        feature_engine = FeatureEngine()
+
+        # One index for the whole run. Previously this function re-scanned every
+        # transaction in the dataset for every window — O(windows x transactions), which
+        # put any dataset large enough to be statistically meaningful out of reach.
+        # The index preserves the identical half-open [start, end) semantics; see
+        # app/evaluation/indexing.py.
+        txn_index = TransactionWindowIndex(dataset.transactions)
+
+        # Build feature maps per window
+        def extract_split_features(labels, engine: FeatureEngine | None = None):
+            engine = engine or feature_engine
+            X, y, records = [], [], []
+            for w in labels:
+                w_txns = txn_index.slice(
+                    merchant_id=w.merchant_id,
+                    start=w.window_end - w.window_size.delta,
+                    end=w.window_end,
+                )
+                vec = engine.extract_window_features(
+                    merchant_id=w.merchant_id,
+                    window_size=w.window_size,
+                    window_end=w.window_end,
+                    transactions=w_txns,
+                )
+                X.append(vec.model_features)
+                y.append(1 if w.label is WindowLabel.FRAUD_SPIKE else 0)
+                records.append({
+                    "merchant_id": w.merchant_id,
+                    "window_size": w.window_size,
+                    "window_end": w.window_end,
+                    "label": w.label,
+                    "dominant_scenario_id": w.dominant_scenario_id,
+                    "gmv": float(vec.evidence.get("D.gmv", 0.0)),
+                })
+            return X, np.array(y, dtype=int), records
+
+        # Pass 1: raw TRAIN features (unfitted engine) — the only input to baseline fitting.
+        X_train_raw, _, _ = extract_split_features(train_labels)
+
+        # Fit on TRAIN history only, then freeze.
+        baseline_engine = fit_baselines_from_window_history(
+            [
+                {
+                    "merchant_id": w.merchant_id,
+                    "window_size": w.window_size.value,
+                    "window_end": w.window_end,
+                    # Deviation twins are derived quantities; fitting a baseline on a
+                    # previous pass's `_dev` column would be fitting a baseline on a
+                    # baseline. Only raw feature values feed the fit.
+                    "features": {k: v for k, v in feats.items() if not k.endswith("_dev")},
+                }
+                for w, feats in zip(train_labels, X_train_raw)
+            ]
+        )
+
+        # Pass 2. TRAIN is transformed in-sample (standard, and confined to model
+        # fitting); VAL/TEST use the strict engine, which raises BaselineLeak if any
+        # baseline reaches past the window it is applied to.
+        train_engine = FeatureEngine(baseline_engine=baseline_engine.with_in_fit_period_use(True))
+        scoring_engine = FeatureEngine(baseline_engine=baseline_engine)
+
+        X_train, y_train, _ = extract_split_features(train_labels, train_engine)
+        X_val, y_val, _ = extract_split_features(val_labels, scoring_engine)
+        X_test, y_test, test_meta = extract_split_features(test_labels, scoring_engine)
+
+        # 3. Fit 3 Detectors on TRAIN
+        detector_a = VolumeOnlyDetector().fit(X_train, y_train)
+        detector_b = ContextualMLDetector().fit(X_train, y_train)
+        detector_c = VeyraFusionDetector().fit(X_train, y_train)
+
+        detectors: list[BaseDetector] = [detector_a, detector_b, detector_c]
+        benchmark_results: dict[str, DetectorBenchmarkResult] = {}
+
+        # Build ground truth incidents in TEST split
+        test_duration_days = max(1.0, (dataset.test_split_end - dataset.val_split_end).total_seconds() / 86400.0)
+        n_merchants = len(dataset.merchants)
+
+        # Group ground truth incidents from test metadata
+        gt_incidents: list[GroundTruthIncident] = []
+        # Find contiguous spans of positive test windows
+        for m_profile in dataset.merchants:
+            m_id = m_profile.merchant.merchant_id
+            m_test_w = [t for t in test_meta if t["merchant_id"] == m_id and t["label"] is WindowLabel.FRAUD_SPIKE]
+            if m_test_w:
+                gt_incidents.append(
+                    GroundTruthIncident(
+                        scenario_id=m_test_w[0]["dominant_scenario_id"] or "attack",
+                        merchant_id=m_id,
+                        start_time=m_test_w[0]["window_end"] - m_test_w[0]["window_size"].delta,
+                        end_time=m_test_w[-1]["window_end"],
+                        is_attack=True,
+                        total_gmv=sum(x["gmv"] for x in m_test_w),
+                    )
+                )
+
+        # 4. Tune thresholds on VAL and evaluate on TEST
+        for det in detectors:
+            val_probs = det.predict_proba(X_val)
+            thresholds = choose_operating_thresholds(
+                y_true=y_val,
+                y_prob=val_probs,
+                review_capacity_cap=review_capacity_cap,
             )
+
+            test_probs = det.predict_proba(X_test)
+            w_metrics = compute_window_metrics(y_test, test_probs, threshold=thresholds.theta_review)
+
+            # Assemble flagged windows
+            flagged_windows: list[FlaggedWindowRecord] = []
+            hard_neg_fps: dict[str, int] = {}
+
+            for idx, (prob, meta) in enumerate(zip(test_probs, test_meta)):
+                if prob >= thresholds.theta_review:
+                    flagged_windows.append(
+                        FlaggedWindowRecord(
+                            merchant_id=meta["merchant_id"],
+                            window_size=meta["window_size"],
+                            window_end=meta["window_end"],
+                            risk_score=float(prob),
+                            gmv=meta["gmv"],
+                        )
+                    )
+                    # Check if false positive on legitimate scenario
+                    if meta["label"] is WindowLabel.LEGIT_SPIKE or meta["label"] is WindowLabel.NORMAL:
+                        sc_id = meta["dominant_scenario_id"] or "normal"
+                        hard_neg_fps[sc_id] = hard_neg_fps.get(sc_id, 0) + 1
+
+            pred_incidents = assemble_predicted_incidents(flagged_windows)
+            inc_metrics = match_incidents(pred_incidents, gt_incidents)
+
+            # False alerts per merchant per day
+            total_false_alerts = inc_metrics.false_positive_count
+            fa_rate = total_false_alerts / (max(1, n_merchants) * test_duration_days)
+
+            # Expected loss = Missed GMV + (False Alerts * Cost)
+            expected_loss = inc_metrics.missed_fraud_gmv + (total_false_alerts * 250.0)
+
+            benchmark_results[det.name] = DetectorBenchmarkResult(
+                detector_name=det.name,
+                window_metrics=w_metrics,
+                incident_metrics=inc_metrics,
+                thresholds=thresholds,
+                false_alerts_per_merchant_day=fa_rate,
+                hard_negative_fp_counts=hard_neg_fps,
+                expected_financial_loss=expected_loss,
+            )
+
+        hard_negative_population: dict[str, int] = {}
+        for meta in test_meta:
+            if meta["label"] is WindowLabel.LEGIT_SPIKE:
+                sc_id = meta["dominant_scenario_id"] or "unknown"
+                hard_negative_population[sc_id] = hard_negative_population.get(sc_id, 0) + 1
+
+        return BenchmarkSuiteResults(
+            results_by_detector=benchmark_results,
+            test_start=dataset.val_split_end,
+            test_end=dataset.test_split_end,
+            n_merchants=n_merchants,
+            n_test_windows=len(test_labels),
+            n_ground_truth_attack_incidents=len(gt_incidents),
+            hard_negative_population=hard_negative_population,
         )
-
-    if frame.hard_negatives is not None:
-        add(
-            "hard_negatives",
-            frame.hard_negatives.astype(bool) & (frame.labels == 0),
-            "Legitimate traffic engineered to look suspicious. Any flag here is a false positive.",
-        )
-
-    classes = np.asarray(frame.label_classes)
-    add("legit_agent", classes == "LEGIT_AGENT",
-        "Legitimate automation. Flags here are the Kill Test 2 failure mode.")
-    add("legit_human", classes == "LEGIT_HUMAN")
-    add("coordinated_abuse", classes == "COORDINATED_ABUSE",
-        "The target loss class. Recall here is the headline detection number.")
-    add("suspicious_automation", classes == "SUSPICIOUS_AUTOMATION")
-
-    scenarios = np.asarray(frame.scenarios)
-    for scenario in sorted(set(frame.scenarios)):
-        add(f"scenario:{scenario}", scenarios == scenario)
-
-    return slices
-
-
-def _detection_lead_time(frame: FeatureFrame, decisions: list[str]) -> dict:
-    """How far into a campaign the first flag lands.
-
-    Because the context window is past-only, the first transaction of a campaign has no
-    campaign context by construction. This measures the cost of that honesty.
-    """
-    per_campaign: dict[str, list[tuple[int, str]]] = defaultdict(list)
-    for i, campaign_id in enumerate(frame.campaign_ids):
-        if campaign_id:
-            per_campaign[campaign_id].append((i, decisions[i]))
-
-    positions: list[int] = []
-    undetected = 0
-    for members in per_campaign.values():
-        flagged_at = next(
-            (rank for rank, (_, decision) in enumerate(members) if decision != Decision.ALLOW),
-            None,
-        )
-        if flagged_at is None:
-            undetected += 1
-        else:
-            positions.append(flagged_at)
-
-    return {
-        "campaigns_evaluated": len(per_campaign),
-        "campaigns_detected": len(positions),
-        "campaigns_undetected": undetected,
-        "median_transactions_before_first_flag": (
-            float(np.median(positions)) if positions else None
-        ),
-        "mean_transactions_before_first_flag": (
-            round(float(np.mean(positions)), 3) if positions else None
-        ),
-        "note": (
-            "Past-only context means the first transaction of a campaign has no cluster to "
-            "observe yet. A value of 0 means the campaign was flagged on its first event."
-        ),
-    }
-
-
-def _evaluate_detector(
-    name: str,
-    validation: FeatureFrame,
-    holdout: FeatureFrame,
-    val_scores: np.ndarray,
-    holdout_scores: np.ndarray,
-    cost_model: CostModel,
-    latency_p50: float | None = None,
-    latency_p95: float | None = None,
-) -> tuple[DetectorResult, DetectorResult, list[ThresholdPoint], dict]:
-    sweep = threshold_sweep(val_scores, validation.labels, validation.amounts, cost_model)
-    operating = choose_operating_point(sweep, max_review_rate=MAX_REVIEW_RATE)
-
-    results: dict[str, DetectorResult] = {}
-    for split_name, frame, scores in (
-        ("validation", validation, val_scores),
-        ("holdout", holdout, holdout_scores),
-    ):
-        decisions = decisions_from_scores(
-            scores, operating.review_threshold, operating.block_threshold
-        )
-        flagged = [0 if d == Decision.ALLOW else 1 for d in decisions]
-        results[split_name] = DetectorResult(
-            detector=name,
-            split=SplitName(split_name),
-            metrics=classification_metrics(frame.labels, flagged, scores),
-            loss=expected_loss(decisions, frame.labels, frame.amounts, cost_model),
-            thresholds={
-                "review": operating.review_threshold,
-                "block": operating.block_threshold,
-                "max_review_rate": MAX_REVIEW_RATE,
-            },
-            latency_ms_p50=latency_p50,
-            latency_ms_p95=latency_p95,
-            slices=_slice_metrics(frame, scores, decisions),
-        )
-
-    holdout_decisions = decisions_from_scores(
-        holdout_scores, operating.review_threshold, operating.block_threshold
-    )
-    extra = {
-        "calibration_error_holdout": calibration_error(holdout_scores, holdout.labels),
-        "lead_time_holdout": _detection_lead_time(holdout, holdout_decisions),
-    }
-    return results["validation"], results["holdout"], sweep, extra
-
-
-def run_evaluation(
-    dataset: Dataset | None = None,
-    dataset_path: str | Path | None = None,
-    seed: int = 42,
-    detectors: list[str] | None = None,
-    cost_model: CostModel | None = None,
-    model_dir: str | Path | None = None,
-    notes: str | None = None,
-) -> tuple[EvaluationRunResponse, ModelBundle | None, SplitResult]:
-    settings = get_settings()
-    detectors = detectors or ["rules", "txn_ml", "veyra"]
-    cost_model = cost_model or cost_model_from_settings(settings)
-    run_id = new_run_id()
-    started_at = datetime.now(UTC)
-    clock = time.perf_counter()
-
-    if dataset is None:
-        if dataset_path is None:
-            raise ValueError("either a dataset or a dataset_path is required")
-        dataset = load_dataset(dataset_path)
-
-    split = split_dataset(dataset, seed=seed)
-    log.info("dataset_split", extra=split.summary())
-
-    baselines = Baselines.fit(split.train.transactions)
-    frame = extract_features(dataset, baselines=baselines)
-    parts = split_frame(frame, split.assignment)
-    train, validation, holdout = parts["train"], parts["validation"], parts["holdout"]
-
-    bundle: ModelBundle | None = None
-    if "veyra" in detectors or "txn_ml" in detectors:
-        bundle = train_bundle(train, seed=seed, dataset_id=dataset.dataset_id)
-
-    latency_p50 = float(np.percentile(frame.latency_ms, 50)) if frame.latency_ms else None
-    latency_p95 = float(np.percentile(frame.latency_ms, 95)) if frame.latency_ms else None
-
-    scorers = {}
-    if "rules" in detectors:
-        scorers["rules"] = RulesDetector()
-    if "txn_ml" in detectors and bundle is not None:
-        scorers["txn_ml"] = TransactionMLDetector(model=bundle.baseline_txn_only)
-    if "veyra" in detectors and bundle is not None:
-        scorers["veyra"] = VeyraDetector(bundle)
-
-    results: list[DetectorResult] = []
-    sweeps: dict[str, list[ThresholdPoint]] = {}
-    diagnostics: dict[str, dict] = {}
-    chosen_thresholds: dict[str, dict] = {}
-
-    for name, detector in scorers.items():
-        val_scores = detector.score(validation)
-        holdout_scores = detector.score(holdout)
-        val_result, holdout_result, sweep, extra = _evaluate_detector(
-            name, validation, holdout, val_scores, holdout_scores, cost_model,
-            latency_p50 if name == "veyra" else None,
-            latency_p95 if name == "veyra" else None,
-        )
-        results.extend([val_result, holdout_result])
-        sweeps[name] = sweep
-        diagnostics[name] = extra
-        chosen_thresholds[name] = holdout_result.thresholds
-        log.info(
-            "detector_evaluated",
-            extra={
-                "detector": name,
-                "holdout_precision": holdout_result.metrics.precision,
-                "holdout_recall": holdout_result.metrics.recall,
-                "holdout_expected_loss": holdout_result.loss.expected_loss,
-            },
-        )
-
-    if bundle is not None:
-        bundle.thresholds = {
-            "review": chosen_thresholds.get("veyra", {}).get("review", 0.45),
-            "block": chosen_thresholds.get("veyra", {}).get("block", 0.75),
-        }
-        bundle.save(model_dir or settings.model_dir)
-        baselines.save(Path(model_dir or settings.model_dir) / "baselines.json")
-
-    response = EvaluationRunResponse(
-        run_id=run_id,
-        status="completed",
-        created_at=started_at,
-        completed_at=datetime.now(UTC),
-        dataset_id=dataset.dataset_id,
-        dataset_summary={
-            **dataset.manifest.get("counts", {}),
-            "by_class": dataset.manifest.get("by_class", {}),
-            "by_scenario": dataset.manifest.get("by_scenario", {}),
-            "hard_negatives": dataset.manifest.get("hard_negatives", {}),
-            "label_balance": dataset.manifest.get("label_balance", {}),
-            "split_sizes": split.summary(),
-            "elapsed_seconds": round(time.perf_counter() - clock, 2),
-            "diagnostics": diagnostics,
-            "fusion_weights": bundle.fusion.weights() if bundle and bundle.fusion else {},
-            "fusion_intercept": bundle.fusion.intercept if bundle and bundle.fusion else None,
-        },
-        cost_model=cost_model,
-        results=results,
-        threshold_sweep=sweeps,
-        leakage_check=split.leakage,
-    )
-    return response, bundle, split
-
-
-def save_run(response: EvaluationRunResponse, report_dir: str | Path) -> tuple[Path, Path]:
-    """Write the machine-readable run and the human-readable report side by side."""
-    from app.evaluation.report import render_markdown
-
-    root = Path(report_dir)
-    root.mkdir(parents=True, exist_ok=True)
-    json_path = root / f"evaluation_{response.run_id}.json"
-    json_path.write_text(response.model_dump_json(indent=2), encoding="utf-8")
-
-    markdown_path = root / "evaluation_report.md"
-    markdown_path.write_text(render_markdown(response), encoding="utf-8")
-
-    latest = root / "latest_run.json"
-    latest.write_text(json.dumps({"run_id": response.run_id, "path": str(json_path)}), "utf-8")
-    return json_path, markdown_path
