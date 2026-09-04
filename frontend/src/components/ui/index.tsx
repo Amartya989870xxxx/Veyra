@@ -309,7 +309,18 @@ export function ErrorState({
   );
 }
 
-export function EmptyState({ title, detail, action }: { title: string; detail: string; action?: React.ReactNode }) {
+export function EmptyState({
+  title,
+  detail,
+  description,
+  action,
+}: {
+  title: string;
+  detail?: string;
+  description?: string;
+  action?: React.ReactNode;
+}) {
+  const text = detail || description;
   return (
     <div
       style={{
@@ -324,7 +335,7 @@ export function EmptyState({ title, detail, action }: { title: string; detail: s
       }}
     >
       <div style={{ fontSize: 'var(--text-md)', fontWeight: 600, color: 'var(--text-primary)' }}>{title}</div>
-      <p style={{ maxWidth: 420, fontSize: 'var(--text-sm)', lineHeight: 1.6 }}>{detail}</p>
+      {text && <p style={{ maxWidth: 420, fontSize: 'var(--text-sm)', lineHeight: 1.6 }}>{text}</p>}
       {action}
     </div>
   );

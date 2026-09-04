@@ -15,12 +15,20 @@ import { api } from '../../api/client';
 import type { HealthResponse } from '../../api/types';
 import { Button } from '../ui';
 
-export type RouteId = 'overview' | 'detection' | 'performance' | 'architecture' | 'docs';
+export type RouteId =
+  | 'overview'
+  | 'detection'
+  | 'scale_lab'
+  | 'performance'
+  | 'explorer'
+  | 'architecture'
+  | 'docs';
 
 export const ROUTES: { id: RouteId; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'detection', label: 'Detection' },
-  { id: 'performance', label: 'Performance' },
+  { id: 'scale_lab', label: 'Scale Lab' },
+  { id: 'explorer', label: 'Data Explorer' },
   { id: 'architecture', label: 'Architecture' },
   { id: 'docs', label: 'Documentation' },
 ];
@@ -102,7 +110,7 @@ export function TopNav({
 
         <nav aria-label="Primary" className="veyra-desktop-nav" style={{ display: 'flex', gap: 2 }}>
           {ROUTES.map((r) => {
-            const active = r.id === route;
+            const active = r.id === route || (r.id === 'scale_lab' && route === 'performance');
             return (
               <button
                 key={r.id}

@@ -123,6 +123,66 @@ class Settings(BaseSettings):
         default=750.0, description="Flat dispute/chargeback handling fee per missed abuse, INR"
     )
 
+    # --- demo run explorer (Part 2A) -------------------------------------------------
+    # Bounded in-process retention for /v2/demo/simulate runs, so the transaction/feature
+    # explorer has something to page through without persisting arbitrary synthetic
+    # volume into the real database. Same pattern as app/core/redis_client.LocalWindowStore.
+    demo_run_store_max_runs: int = 20
+    demo_run_store_ttl_seconds: int = 1800
+
+    # --- scale/stress benchmark guardrails (Part 3B) --------------------------------
+    # A workload_size above this ceiling is never actually generated/persisted in one
+    # run — it is capped, and the cap is reported. This is what stops a "100M" request
+    # from being able to freeze the machine a demo click happens to run on.
+    benchmark_hard_cap_events: int = Field(
+        default=2_000_000,
+        description=(
+            "Maximum events one benchmark run will actually generate/persist, regardless "
+            "of the requested workload_size."
+        ),
+    )
+    benchmark_max_seconds: float = Field(
+        default=120.0,
+        description=(
+            "Wall-clock budget per benchmark run before it stops early and reports a "
+            "partial result."
+        ),
+    )
+    benchmark_chunk_size: int = Field(
+        default=20_000,
+        description=(
+            "Transactions generated and persisted per chunk, so a large workload is never "
+            "materialized as one Python list."
+        ),
+    )
+    benchmark_max_sample_windows: int = Field(
+        default=150,
+        description=(
+            "Upper bound on how many merchant-windows a 'pipeline' benchmark actually "
+            "scores for computation-scale timing, rather than every window a huge workload "
+            "could produce."
+        ),
+    )
+    benchmark_allow_experimental: bool = Field(
+        default=True,
+        description=(
+            "When false, experimental-tier workloads (>10M) are refused before execution "
+            "with status 'rejected' rather than capped and run. Gives an operator a way to "
+            "take the 100M button off the table entirely on a machine that should not be "
+            "asked."
+        ),
+    )
+    benchmark_sample_rows: int = Field(
+        default=8,
+        description=(
+            "Representative transactions retained per bucket (legitimate/fraud/random) "
+            "for a benchmark result. Bounded on purpose: this is readable evidence, not "
+            "a data export."
+        ),
+    )
+    benchmark_max_jobs_retained: int = 10
+    benchmark_job_ttl_seconds: int = 3600
+
     @field_validator("semantic_api_key", "crypto_pepper", mode="before")
     @classmethod
     def _blank_to_none(cls, v: object) -> object:
@@ -164,7 +224,7 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.cors_allowed_origins.split(",") if o.strip() and o.strip() != "*"]
 
     @model_validator(mode="after")
-    def _production_fails_closed(self) -> "Settings":
+    def _production_fails_closed(self) -> Settings:
         """Refuse to construct a production Settings object with missing secrets.
 
         This runs at `Settings()` construction time, i.e. at import/startup — a

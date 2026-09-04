@@ -40,8 +40,15 @@ All of the following are implemented and exercised by the test suite:
   loss, with financial-exposure estimation. Veyra **recommends; it never auto-blocks**.
 - **Forensic explanation**: a written narrative plus ranked feature deviations and the entity
   graph, exportable as Markdown, CSV or JSON.
-- **Performance benchmarking**: burst injection with measured ingestion, feature and scoring
-  timings taken server-side.
+- **Model-backed demo scoring**: `/v2/demo/simulate` scores every run with a real fitted
+  `VeyraFusionDetector`, trained on a synthetic corpus that ends before any demo window
+  begins. The scenario's own ground-truth label is shown for comparison and never read when
+  computing the score.
+- **Synthetic Data Explorer**: every demo run's transactions, features and entity graph stay
+  inspectable for a bounded time — paginated, capped, and clearly marked as synthetic.
+- **Scale Lab**: bounded, chunked workload benchmarks from 100K to 100M events, splitting
+  ingestion (write) scale from detection (computation) scale, with explicit completion
+  statuses so a partial run is never reported as complete.
 - **Security**: authenticated principals, tenant-scoped queries, encrypted/tokenized
   identifiers, fail-closed production configuration.
 
@@ -208,10 +215,11 @@ For PostgreSQL, set `VEYRA_DATABASE_URL` and run `alembic upgrade head`.
 | Page | What it does | Backed by |
 |---|---|---|
 | **Overview** | Problem-first landing page with product-relevant 3D stream network topology visualizer, interactive "Same spike. Different conclusion." story contrasting legitimate flash sales vs card testing, walkthrough video showcase, and audience breakdown | `GET /v2/demo/scenarios` |
-| **Detection** | Core risk-operations console: select scenario, simulate traffic stream, read verdict across 5 evidence tabs (Why it was flagged, Pipeline timeline, Entity network, Historical comparison, Transaction events), featuring an AI forensic dossier with typewriter Markdown streaming | `POST /v2/demo/simulate` |
-| **Performance** | Performance lab: burst injection stress testing with server-side timings measuring durable writes, feature extraction, and ML scoring throughput (2,000+ TPS) | `POST /v2/demo/stress-test` |
-| **Architecture** | Walkable map of the 7-stage core detection pipeline with modules, ADR decisions, inputs, outputs, and design trade-offs | static |
-| **Documentation** | Developer reference with two-layer structure: "IN SIMPLE TERMS" plain-language summaries followed by "TECHNICAL DETAILS" engineering specs | static |
+| **Detection** | Core risk-operations console: select scenario, simulate traffic stream, read a model-scored verdict across 6 evidence tabs (Why it was flagged, Detection pipeline, Synthetic data explorer, Entity network, Historical comparison, Transaction events), featuring an AI forensic dossier with typewriter Markdown streaming and the real 12-stage server-side execution trace | `POST /v2/demo/simulate` |
+| **Scale Lab** | Bounded, chunked workload benchmarks (100K–100M events) reporting measured ingestion throughput, sampled per-window computation latency, traced memory, storage growth and representative synthetic samples, with explicit `completed` / `stopped_early` / `capped` / `failed` / `rejected` statuses | `POST /v2/demo/benchmarks` |
+| **Data Explorer** | Inspect the exact synthetic transactions, feature vector and entity topology behind any recent demo run, paginated and bounded | `GET /v2/demo/runs/{run_id}/*` |
+| **Architecture** | Walkable map of the 10-stage core detection pipeline plus the demo's 12-stage execution trace and the Scale Lab benchmark pipeline, with modules, ADR decisions, inputs, outputs and design trade-offs | static |
+| **Documentation** | Developer reference with two-layer structure: "IN SIMPLE TERMS" plain-language summaries followed by "TECHNICAL DETAILS" engineering specs, covering the detection pipeline, synthetic provenance, the data explorer and the Scale Lab contract | static |
 
 ## API
 
@@ -221,8 +229,18 @@ All application routes live under `/v2`. `/api/v1/events` remains mounted for in
 |---|---|---|
 | `GET` | `/health` | Liveness, version, environment |
 | `GET` | `/v2/demo/scenarios` | Supported scenarios with attack/benign flags |
-| `POST` | `/v2/demo/simulate` | Generate and score a scenario; full forensic report |
-| `POST` | `/v2/demo/stress-test` | Inject a burst, return measured stage timings |
+| `POST` | `/v2/demo/simulate` | Generate and model-score a scenario; full 12-stage trace and forensic report |
+| `POST` | `/v2/demo/stress-test` | Inject a small fixed-size burst, return measured stage timings |
+| `GET` | `/v2/demo/runs/{run_id}` | Metadata, entity graph and links for one stored demo run |
+| `GET` | `/v2/demo/runs/{run_id}/transactions` | Paginated synthetic transactions behind a run (page size capped at 200) |
+| `GET` | `/v2/demo/runs/{run_id}/features` | Full feature vector for a run, grouped by family |
+| `GET` | `/v2/demo/runs/{run_id}/summary` | Composition, time range and entity counts for a run |
+| `GET` | `/v2/demo/runs/{run_id}/entities` | Entity topology: counts, ratios, cluster concentration, bipartite Gini |
+| `GET` | `/v2/demo/benchmarks/presets` | Workload presets, tiers, and this server's configured guardrails |
+| `POST` | `/v2/demo/benchmarks` | Queue a Scale Lab benchmark; returns immediately with a `run_id` |
+| `GET` | `/v2/demo/benchmarks/{run_id}/progress` | Cheap polling target for an in-flight benchmark |
+| `GET` | `/v2/demo/benchmarks/{run_id}` | Full benchmark run, including the result once terminal |
+| `GET` | `/v2/demo/benchmarks` | Recent benchmark runs held in the bounded registry |
 | `POST` | `/v2/score-window` | Score an already-ingested merchant-window |
 | `GET` | `/v2/incidents` | List incidents (filter by merchant, status) |
 | `GET` | `/v2/incidents/{id}` | One incident with its evidence payload |
@@ -230,7 +248,45 @@ All application routes live under `/v2`. `/api/v1/events` remains mounted for in
 | `GET` | `/v2/merchants/{id}/baselines` | Stored baselines behind a merchant's comparisons |
 
 Money fields serialise as **strings**, not floats; they are Decimals server-side. Parse them
-at the formatting boundary.
+at the formatting boundary. Every demo response carries a `provenance` block
+(`data_source: "synthetic"`, `is_production_data: false`, plus a `ground_truth_semantics`
+note) so a client never has to infer where the data came from.
+
+## Scale Lab
+
+`POST /v2/demo/benchmarks` runs a bounded, chunked synthetic workload against the real
+database and the real detector, splitting two questions that scale differently:
+**ingestion** (generate, validate, persist — `events_per_second`) and **computation**
+(feature extraction, entity graph, model inference on a sampled subset of
+merchant-windows — `per_window_latency_ms`, milliseconds *per merchant-window*, not per
+transaction). Results are measured on this server against SQLite; they describe this
+environment, not production capacity.
+
+A run reports exactly one terminal status, in this precedence:
+
+```
+failed  >  stopped_early  >  capped  >  completed
+```
+
+A workload that hits the wall-clock budget is **`stopped_early`**, never `completed`, even
+if the safety ceiling also capped its target — the two facts are independently readable
+(`capped: true/false`) but only one becomes the headline. `rejected` means the request was
+refused before anything ran (currently: an experimental-tier request when experimental
+benchmarks are disabled).
+
+Guardrails, as currently configured (`VEYRA_BENCHMARK_*` environment variables):
+
+| Guardrail | Default |
+|---|---|
+| Hard event ceiling | 2,000,000 events/run |
+| Wall-clock budget | 120 seconds/run |
+| Chunk size | 20,000 events, generated and persisted incrementally |
+| Sampled windows (pipeline mode) | 150 max |
+| Concurrent benchmarks | 1 |
+| Representative samples | 8 per bucket (legitimate / fraud / random), reservoir-sampled |
+
+Every benchmark's rows are deleted from the database before its result is returned, and a
+result never returns the full generated workload — only bounded aggregates and samples.
 
 ## Testing
 
@@ -248,7 +304,7 @@ cd frontend && npm run build && npm run lint
 
 Stated plainly, because they are real:
 
-- **`ruff check .` reports ~409 findings** (mostly `E501` line length, `F401` unused imports).
+- **`ruff check .` reports ~384 findings** (mostly `E501` line length, `F401` unused imports).
   These are not auto-fixed: in this codebase `F401` can be load-bearing, since SQLAlchemy
   model registration and `__init__` re-exports both depend on imports that look unused.
 - **`app/api/v1/health.py` is never mounted.** It defines `/health`, `/ready` and
@@ -258,8 +314,16 @@ Stated plainly, because they are real:
 - **No automated frontend tests**: typecheck, lint and build are the safety net.
 - Baselines need history; demo endpoints synthesize a fresh merchant per call, so their
   baseline comparisons are thinner than a merchant with accumulated traffic.
-- Throughput figures come from the project environment against SQLite. They describe that
-  machine, not production capacity.
+- Scale Lab throughput and latency figures come from the project environment against
+  SQLite. They describe that machine, not production capacity.
+- At the default 120-second wall-clock budget, Scale Lab workloads at or above roughly
+  500K events typically report `stopped_early` rather than `completed` on a modest
+  development machine; raise `VEYRA_BENCHMARK_MAX_SECONDS` to run larger presets to
+  completion.
+- The demo scoring model (`veyra_fusion_demo`) is deliberately small — one merchant
+  profile, one week of training history — so a browser click does not wait minutes for a
+  fit. It illustrates the pipeline; the statistically meaningful evaluation is the offline
+  harness in `scripts/run_experiment.py` (`research/BENCHMARK_RESULTS.md`).
 
 ## Defence only
 

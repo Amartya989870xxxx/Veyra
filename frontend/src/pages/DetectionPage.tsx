@@ -1,16 +1,20 @@
-/** Detection console — the core product surface.
+/** Detection Page.
  *
- * Layout is a risk-operations console, not a marketing page: a control rail on
- * the left, the verdict and its evidence on the right. Every value rendered
- * comes from POST /v2/demo/simulate. There is no offline fallback; a failed call
- * shows an error with a retry, because a fabricated success is worse than a
- * visible failure.
+ * The interactive detection console. Picks a scenario, generates synthetic traffic,
+ * and sends it through the live multi-stage Veyra detection pipeline.
+ *
+ * Exposes truthful data provenance, real stage execution telemetry, fitted model
+ * score, decision policy tier, and an inspectable synthetic data explorer.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ChevronRight, Play, ShieldCheck } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronRight, Info, Play, ShieldCheck } from 'lucide-react';
 import { ApiError, api } from '../api/client';
-import type { ScenarioSummary, SimulationReport, WindowSize } from '../api/types';
+import type {
+  ScenarioSummary,
+  SimulationReport,
+  WindowSize,
+} from '../api/types';
 import { deriveEvidence } from '../lib/evidence';
 import {
   formatCount,
@@ -18,19 +22,16 @@ import {
   formatPercent,
   formatTimestamp,
   formatTimestampUtc,
-  humanizeControl,
-  windowLabel,
 } from '../lib/format';
 import {
   MERCHANT_CATEGORIES,
-  TIER_COPY,
-  TIER_ORDER,
   WINDOW_OPTIONS,
+  humanizeControl,
   riskHeadline,
   riskLabel,
-  scenarioSummary,
   tierColorVar,
   tierWashVar,
+  windowLabel,
 } from '../lib/scenarios';
 import {
   Badge,
@@ -40,7 +41,6 @@ import {
   EmptyState,
   ErrorState,
   InfoTip,
-  LoadingBlock,
   SectionLabel,
   Skeleton,
   Stat,
@@ -51,16 +51,27 @@ import { PipelineTimeline } from '../components/viz/PipelineTimeline';
 import { BaselineDeviation } from '../components/viz/BaselineDeviation';
 import { ReportExporter } from '../components/reporting/ReportExporter';
 import { NarrativeTypewriter } from '../components/viz/NarrativeTypewriter';
+import { ProvenancePanel } from '../components/viz/ProvenancePanel';
+import { StagedPipelineProgress } from '../components/viz/StagedPipelineProgress';
+import { RunSummaryBanner } from '../components/viz/RunSummaryBanner';
+import { SyntheticDataExplorer } from '../components/explorer/SyntheticDataExplorer';
 
 const TABS = [
   { id: 'why', label: 'Why it was flagged' },
   { id: 'pipeline', label: 'Detection pipeline' },
+  { id: 'explorer', label: 'Synthetic data explorer' },
   { id: 'graph', label: 'Entity network' },
   { id: 'baseline', label: 'Historical comparison' },
   { id: 'events', label: 'Transaction events' },
 ];
 
-export function DetectionPage({ initialScenario }: { initialScenario?: string }) {
+export function DetectionPage({
+  initialScenario,
+  onNavigateExplorer,
+}: {
+  initialScenario?: string;
+  onNavigateExplorer?: (runId: string) => void;
+}) {
   const [scenarios, setScenarios] = useState<ScenarioSummary[] | null>(null);
   const [scenariosError, setScenariosError] = useState<ApiError | null>(null);
 
@@ -73,6 +84,24 @@ export function DetectionPage({ initialScenario }: { initialScenario?: string })
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<ApiError | null>(null);
   const [tab, setTab] = useState('why');
+
+  // Presentation & stage pacing
+  const analysisRef = useRef<HTMLDivElement>(null);
+  const [activeStageIndex, setActiveStageIndex] = useState(0);
+  const [presentationElapsedMs, setPresentationElapsedMs] = useState(0);
+  const [pendingReport, setPendingReport] = useState<SimulationReport | null>(null);
+  const presentationTimerRef = useRef<number | null>(null);
+  const pendingReportRef = useRef<SimulationReport | null>(null);
+
+  const TARGET_PRESENTATION_MS = 25000;
+
+  useEffect(() => {
+    return () => {
+      if (presentationTimerRef.current) {
+        window.clearInterval(presentationTimerRef.current);
+      }
+    };
+  }, []);
 
   const loadScenarios = useCallback(() => {
     setScenariosError(null);
@@ -89,8 +118,56 @@ export function DetectionPage({ initialScenario }: { initialScenario?: string })
   }, [initialScenario]);
 
   const runDetection = useCallback(async () => {
+    // 1. Immediately enter loading state and clear previous result/error
     setRunning(true);
     setRunError(null);
+    setResult(null);
+    setPendingReport(null);
+    pendingReportRef.current = null;
+    setActiveStageIndex(0);
+    setPresentationElapsedMs(0);
+
+    // 2. PART 2: Immediately smooth scroll to analysis/progress section
+    const prefersReducedMotion =
+      typeof window !== 'undefined' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    setTimeout(() => {
+      analysisRef.current?.scrollIntoView({
+        behavior: prefersReducedMotion ? 'auto' : 'smooth',
+        block: 'start',
+      });
+    }, 15);
+
+    // 3. Start presentation elapsed timer (~11s target)
+    const startTime = Date.now();
+    if (presentationTimerRef.current) {
+      window.clearInterval(presentationTimerRef.current);
+    }
+
+    presentationTimerRef.current = window.setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      setPresentationElapsedMs(elapsed);
+
+      // 12 stages across 11,000ms: ~916ms per stage
+      const stageIdx = Math.min(11, Math.floor(elapsed / (TARGET_PRESENTATION_MS / 12)));
+      setActiveStageIndex(stageIdx);
+
+      // Check if presentation target has elapsed AND backend has returned
+      if (elapsed >= TARGET_PRESENTATION_MS) {
+        if (pendingReportRef.current) {
+          if (presentationTimerRef.current) {
+            window.clearInterval(presentationTimerRef.current);
+            presentationTimerRef.current = null;
+          }
+          setResult(pendingReportRef.current);
+          setRunning(false);
+          setTab('why');
+        }
+      }
+    }, 80);
+
+    // 4. Issue backend simulation request
     try {
       const report = await api.runSimulation({
         scenario_id: scenarioId,
@@ -99,13 +176,29 @@ export function DetectionPage({ initialScenario }: { initialScenario?: string })
         window_size: windowSize,
         seed: 42,
       });
-      setResult(report);
-      setTab('why');
+      pendingReportRef.current = report;
+      setPendingReport(report);
+
+      // If presentation duration already elapsed (e.g. cold start taking > 11s), reveal immediately
+      const currentElapsed = Date.now() - startTime;
+      if (currentElapsed >= TARGET_PRESENTATION_MS) {
+        if (presentationTimerRef.current) {
+          window.clearInterval(presentationTimerRef.current);
+          presentationTimerRef.current = null;
+        }
+        setResult(report);
+        setRunning(false);
+        setTab('why');
+      }
     } catch (e) {
+      if (presentationTimerRef.current) {
+        window.clearInterval(presentationTimerRef.current);
+        presentationTimerRef.current = null;
+      }
       setRunError(e as ApiError);
-      setResult(null);
-    } finally {
       setRunning(false);
+      setResult(null);
+      setPendingReport(null);
     }
   }, [scenarioId, category, intensity, windowSize]);
 
@@ -115,10 +208,12 @@ export function DetectionPage({ initialScenario }: { initialScenario?: string })
     <div className="container-wide" style={{ padding: 'var(--sp-6) var(--sp-5) var(--sp-9)' }}>
       <div style={{ marginBottom: 'var(--sp-5)' }}>
         <SectionLabel>Detection console</SectionLabel>
-        <h1 style={{ fontSize: 'var(--text-2xl)', marginTop: 6 }}>Run a detection</h1>
+        <h1 style={{ fontSize: 'var(--text-2xl)', marginTop: 6, fontWeight: 700 }}>
+          Run a detection
+        </h1>
         <p style={{ color: 'var(--text-secondary)', marginTop: 8, maxWidth: 720, fontSize: 'var(--text-md)' }}>
-          Generate a window of merchant traffic and send it through the full detection pipeline. Choose a
-          scenario, then read what Veyra concluded and why.
+          Generate a synthetic window of merchant traffic and execute it through the full detection pipeline.
+          Choose a scenario, then inspect the measured stage telemetry, fusion score, and evidence.
         </p>
       </div>
 
@@ -126,7 +221,7 @@ export function DetectionPage({ initialScenario }: { initialScenario?: string })
         {/* ------------------------------------------------ control rail */}
         <aside style={{ display: 'grid', gap: 'var(--sp-4)', alignContent: 'start' }}>
           <Card style={{ display: 'grid', gap: 'var(--sp-5)' }}>
-            <Step n={1} title="Choose a scenario" hint="What kind of traffic to generate.">
+            <Step n={1} title="Choose a scenario" hint="What kind of synthetic traffic to generate.">
               {scenariosError ? (
                 <ErrorState
                   title="Could not load scenarios"
@@ -140,46 +235,53 @@ export function DetectionPage({ initialScenario }: { initialScenario?: string })
                 </div>
               ) : (
                 <div style={{ display: 'grid', gap: 8 }}>
-                  <label htmlFor="scenario" className="sr-only">
-                    Scenario
-                  </label>
                   <select
-                    id="scenario"
                     value={scenarioId}
                     onChange={(e) => setScenarioId(e.target.value)}
+                    aria-label="Detection scenario"
                     style={selectStyle}
                   >
-                    <optgroup label="Attacks">
-                      {scenarios
-                        .filter((s) => s.is_attack)
-                        .map((s) => (
-                          <option key={s.scenario_id} value={s.scenario_id}>
-                            {s.name}
-                          </option>
-                        ))}
-                    </optgroup>
-                    <optgroup label="Legitimate surges (should not be flagged)">
-                      {scenarios
-                        .filter((s) => !s.is_attack)
-                        .map((s) => (
-                          <option key={s.scenario_id} value={s.scenario_id}>
-                            {s.name}
-                          </option>
-                        ))}
-                    </optgroup>
+                    {scenarios.map((s) => (
+                      <option key={s.scenario_id} value={s.scenario_id}>
+                        {s.name} ({s.category})
+                      </option>
+                    ))}
                   </select>
-                  <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-                    {scenarioSummary(scenarioId, selectedScenario?.name ?? scenarioId)}
-                  </p>
+
+                  {selectedScenario && (
+                    <div
+                      style={{
+                        fontSize: 'var(--text-xs)',
+                        color: selectedScenario.is_attack ? 'var(--tier-restrict)' : 'var(--tier-observe)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: '50%',
+                          background: selectedScenario.is_attack ? 'var(--tier-restrict)' : 'var(--tier-observe)',
+                        }}
+                      />
+                      {selectedScenario.is_attack
+                        ? 'Attack pattern — expected tier REVIEW or RESTRICT'
+                        : 'Benign surge — expected tier OBSERVE'}
+                    </div>
+                  )}
                 </div>
               )}
             </Step>
 
-            <Step n={2} title="Merchant category" hint="Sets the baseline traffic profile and basket sizes.">
-              <label htmlFor="category" className="sr-only">
-                Merchant category
-              </label>
-              <select id="category" value={category} onChange={(e) => setCategory(e.target.value)} style={selectStyle}>
+            <Step n={2} title="Merchant profile" hint="Category determines baseline volume and amount ranges.">
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                aria-label="Merchant category"
+                style={selectStyle}
+              >
                 {MERCHANT_CATEGORIES.map((c) => (
                   <option key={c.value} value={c.value}>
                     {c.label}
@@ -188,33 +290,40 @@ export function DetectionPage({ initialScenario }: { initialScenario?: string })
               </select>
             </Step>
 
-            <Step
-              n={3}
-              title="Intensity"
-              hint="How aggressive the generated activity is. Lower values are deliberately harder to detect."
-            >
+            <Step n={3} title="Traffic intensity" hint="Higher values scale the volume of injected attempts.">
               <div style={{ display: 'grid', gap: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--text-xs)' }}>
+                  <span style={{ color: 'var(--text-muted)' }}>Multiplier</span>
+                  <span className="mono" style={{ color: 'var(--accent-bright)', fontWeight: 600 }}>
+                    {intensity.toFixed(1)}x
+                  </span>
+                </div>
                 <input
                   type="range"
-                  min={0.2}
-                  max={3}
-                  step={0.1}
+                  min={0.5}
+                  max={3.0}
+                  step={0.5}
                   value={intensity}
                   onChange={(e) => setIntensity(Number(e.target.value))}
-                  aria-label="Intensity"
+                  aria-label="Traffic intensity"
                   style={{ width: '100%', accentColor: 'var(--accent)' }}
                 />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
-                  <span>Subtle</span>
-                  <span className="mono" style={{ color: 'var(--accent-bright)' }}>
-                    {intensity.toFixed(1)}×
-                  </span>
-                  <span>Aggressive</span>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    fontSize: '10px',
+                    color: 'var(--text-muted)',
+                  }}
+                >
+                  <span>0.5x (light)</span>
+                  <span>1.0x (normal)</span>
+                  <span>3.0x (heavy)</span>
                 </div>
               </div>
             </Step>
 
-            <Step n={4} title="Scoring horizon" hint="The length of the traffic window Veyra scores.">
+            <Step n={4} title="Window horizon" hint="Temporal aggregation horizon for grouping events.">
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
                 {WINDOW_OPTIONS.map((w) => {
                   const active = w.value === windowSize;
@@ -233,6 +342,7 @@ export function DetectionPage({ initialScenario }: { initialScenario?: string })
                         fontFamily: 'var(--font-mono)',
                         fontSize: 'var(--text-xs)',
                         fontWeight: 600,
+                        cursor: 'pointer',
                       }}
                     >
                       {w.value}
@@ -253,7 +363,7 @@ export function DetectionPage({ initialScenario }: { initialScenario?: string })
               onClick={runDetection}
               icon={<Play size={16} />}
             >
-              {running ? 'Running detection…' : 'Run detection'}
+              {running ? 'Executing pipeline…' : 'Run detection'}
             </Button>
           </Card>
 
@@ -261,11 +371,32 @@ export function DetectionPage({ initialScenario }: { initialScenario?: string })
         </aside>
 
         {/* ------------------------------------------------------- results */}
-        <main style={{ display: 'grid', gap: 'var(--sp-5)', alignContent: 'start', minWidth: 0 }}>
+        <main
+          ref={analysisRef}
+          style={{
+            display: 'grid',
+            gap: 'var(--sp-5)',
+            alignContent: 'start',
+            minWidth: 0,
+            scrollMarginTop: 'calc(var(--nav-h) + 24px)',
+          }}
+        >
+          {/* Staged Analysis Experience during in-flight run */}
           {running && (
-            <Card>
-              <LoadingBlock label="Generating traffic and scoring the window…" rows={4} />
-            </Card>
+            <StagedPipelineProgress
+              running={true}
+              backendCompleted={Boolean(pendingReport)}
+              activeStageIndex={activeStageIndex}
+              stages={pendingReport?.stages ?? null}
+              serverDurationMs={
+                pendingReport?.run?.total_server_duration_ms ??
+                pendingReport?.run?.timing?.server_processing_ms ??
+                null
+              }
+              timing={pendingReport?.run?.timing ?? null}
+              presentationElapsedMs={presentationElapsedMs}
+              targetPresentationMs={TARGET_PRESENTATION_MS}
+            />
           )}
 
           {!running && runError && (
@@ -283,7 +414,7 @@ export function DetectionPage({ initialScenario }: { initialScenario?: string })
             <Card padded={false}>
               <EmptyState
                 title="No detection run yet"
-                detail="Pick a scenario on the left and select Run detection. Veyra will generate a window of traffic, score it, and explain the result."
+                description="Pick a scenario on the left and click 'Run detection'. Veyra will generate synthetic traffic, execute feature extraction & graph clustering, score it with the fitted fusion model, and explain the verdict."
                 action={
                   <Button variant="primary" onClick={runDetection} icon={<Play size={15} />}>
                     Run detection
@@ -293,7 +424,14 @@ export function DetectionPage({ initialScenario }: { initialScenario?: string })
             </Card>
           )}
 
-          {!running && result && <ResultView result={result} onTabChange={setTab} tab={tab} />}
+          {!running && result && (
+            <ResultView
+              result={result}
+              onTabChange={setTab}
+              tab={tab}
+              onNavigateExplorer={onNavigateExplorer}
+            />
+          )}
         </main>
       </div>
     </div>
@@ -353,7 +491,7 @@ function Step({
   );
 }
 
-/** Says plainly what this demo path is and is not. */
+/** Honest architectural explanation of this demo path. */
 function HonestyNote() {
   return (
     <div
@@ -367,15 +505,14 @@ function HonestyNote() {
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--text-sm)', fontWeight: 600 }}>
-        <AlertTriangle size={14} style={{ color: 'var(--tier-review)' }} />
+        <Info size={14} style={{ color: 'var(--accent-bright)' }} />
         How to read this run
       </div>
       <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', lineHeight: 1.65 }}>
-        Traffic is generated on the server for the scenario you pick, then put through the real pipeline —
-        window slicing, feature extraction, baseline comparison, entity graph, policy and explanation. The
-        risk score on this demo route is produced by a deterministic scoring rule over those measured
-        features, not by a trained model checkpoint, because no serving model is bundled with the
-        prototype. The trained-model comparison lives in the offline benchmark on the Performance page.
+        Traffic is generated on the server for the scenario you pick, then passed through the real pipeline —
+        window slicing, feature extraction, baseline deviation, entity graph clustering, and scoring with the
+        fitted fusion model (<code>veyra_fusion_demo</code>). The resulting score is evaluated by the expected-loss
+        decision policy to produce the action tier and deterministic forensic explanation.
       </p>
     </div>
   );
@@ -385,23 +522,43 @@ function ResultView({
   result,
   tab,
   onTabChange,
+  onNavigateExplorer,
 }: {
   result: SimulationReport;
   tab: string;
   onTabChange: (t: string) => void;
+  onNavigateExplorer?: (runId: string) => void;
 }) {
   const tier = String(result.action_tier);
   const color = tierColorVar(tier);
   const wash = tierWashVar(tier);
+
+  const totalTx = result.run?.total_transactions ?? result.total_transactions ?? 0;
+  const windowSize = result.run?.window_size ?? result.window_size ?? '5m';
+
   const evidence = useMemo(
-    () => deriveEvidence(result.features_summary, result.total_transactions),
-    [result],
+    () => deriveEvidence(result.features_summary, totalTx),
+    [result.features_summary, totalTx],
   );
   const concentrated = (result.features_summary?.['J.largest_cluster_vol_share'] ?? 0) >= 0.3;
 
   return (
-    <>
-      {/* ---------------------------------------------------- verdict */}
+    <div style={{ display: 'grid', gap: 'var(--sp-5)' }}>
+      {/* 1. Truthful Data Provenance Panel */}
+      {result.run && (
+        <ProvenancePanel run={result.run} scenarioName={result.scenario_name} />
+      )}
+
+      {/* 2. Run Summary Banner */}
+      <RunSummaryBanner
+        report={result}
+        onExploreData={(id) => {
+          onTabChange('explorer');
+          onNavigateExplorer?.(id);
+        }}
+      />
+
+      {/* 3. Verdict Card */}
       <Card style={{ borderColor: `${color}44`, background: `linear-gradient(180deg, ${wash} 0%, var(--surface-1) 60%)` }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: 'var(--sp-5)' }}>
           <div style={{ minWidth: 260 }}>
@@ -418,26 +575,34 @@ function ResultView({
               {riskHeadline(tier)}
             </p>
             <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', marginTop: 'var(--sp-3)' }}>
-              {formatCount(result.total_transactions)} payment attempts · {windowLabel(result.window_size)} window ·{' '}
+              {formatCount(totalTx)} payment attempts · {windowLabel(windowSize)} window ·{' '}
               {formatMoney(result.financial_exposure?.at_risk_gmv)} attempted
             </p>
           </div>
 
           <div style={{ display: 'grid', gap: 'var(--sp-4)', alignContent: 'start', minWidth: 200 }}>
-            <Stat label="Decision" value={<span style={{ color }}>{TIER_COPY[tier as keyof typeof TIER_COPY]?.label ?? tier}</span>} sub={TIER_COPY[tier as keyof typeof TIER_COPY]?.meaning} />
+            <Stat
+              label="Policy Decision"
+              value={<span style={{ color }}>{tier}</span>}
+              sub={result.recommended_defensive_control ? humanizeControl(result.recommended_defensive_control) : 'No defensive friction needed'}
+            />
             <Stat
               label="Scenario"
               value={<span style={{ fontSize: 'var(--text-md)' }}>{result.scenario_name}</span>}
-              sub={result.is_attack ? 'Generated as an attack' : 'Generated as legitimate traffic'}
+              sub={
+                result.ground_truth?.scenario_is_labelled_attack || result.is_attack
+                  ? 'Synthetic Ground Truth: Attack pattern'
+                  : 'Synthetic Ground Truth: Legitimate surge'
+              }
             />
           </div>
         </div>
       </Card>
 
-      {/* ------------------------------------------------- exposure row */}
+      {/* 4. Financial Exposure Row */}
       <Card>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--sp-4)' }}>
-          <SectionLabel>Estimated exposure</SectionLabel>
+          <SectionLabel>Estimated financial exposure</SectionLabel>
           <InfoTip text="Cost constants are documented assumptions chosen for this project (ADR-005), not Razorpay economics." />
         </div>
         <div className="veyra-stat-row">
@@ -452,10 +617,10 @@ function ResultView({
         </div>
       </Card>
 
-      {/* ----------------------------------------------------- policy */}
+      {/* 5. Policy Panel */}
       <PolicyPanel result={result} tier={tier} color={color} wash={wash} />
 
-      {/* ------------------------------------------------------- tabs */}
+      {/* 6. Multi-tab Evidence Inspector */}
       <Card padded={false}>
         <div style={{ padding: '0 var(--sp-5)' }}>
           <Tabs tabs={TABS} active={tab} onChange={onTabChange} />
@@ -463,6 +628,7 @@ function ResultView({
         <div id={`panel-${tab}`} role="tabpanel" aria-labelledby={`tab-${tab}`} style={{ padding: 'var(--sp-5)' }}>
           {tab === 'why' && <WhyFlagged result={result} evidence={evidence} />}
           {tab === 'pipeline' && <PipelineTimeline stages={result.stages} />}
+          {tab === 'explorer' && <SyntheticDataExplorer runId={result.run?.run_id ?? null} />}
           {tab === 'graph' && <EntityGraph graph={result.entity_graph} concentrated={concentrated} />}
           {tab === 'baseline' && (
             <div style={{ display: 'grid', gap: 'var(--sp-5)' }}>
@@ -477,7 +643,7 @@ function ResultView({
       </Card>
 
       <ReportExporter report={result} />
-    </>
+    </div>
   );
 }
 
@@ -497,7 +663,7 @@ function PolicyPanel({
       <div style={{ display: 'grid', gap: 'var(--sp-4)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <ShieldCheck size={15} style={{ color }} />
-          <SectionLabel>Recommended control</SectionLabel>
+          <SectionLabel>Recommended defensive control</SectionLabel>
         </div>
 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sp-5)', justifyContent: 'space-between' }}>
@@ -513,7 +679,7 @@ function PolicyPanel({
           </div>
 
           <div style={{ display: 'grid', gap: 6, minWidth: 230 }}>
-            {TIER_ORDER.map((t) => {
+            {['OBSERVE', 'ALERT', 'REVIEW', 'RESTRICT'].map((t) => {
               const active = t === tier;
               return (
                 <div
@@ -521,56 +687,47 @@ function PolicyPanel({
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: 'var(--sp-3)',
-                    padding: '7px 11px',
-                    borderRadius: 'var(--radius-sm)',
-                    background: active ? wash : 'transparent',
-                    border: `1px solid ${active ? `${color}55` : 'var(--border-subtle)'}`,
+                    justifyContent: 'space-between',
+                    padding: '6px 10px',
+                    borderRadius: 5,
+                    background: active ? wash : 'var(--surface-2)',
+                    border: `1px solid ${active ? color : 'transparent'}`,
+                    fontSize: '11px',
+                    fontFamily: 'var(--font-mono)',
+                    color: active ? color : 'var(--text-muted)',
+                    fontWeight: active ? 700 : 500,
                   }}
                 >
-                  <span
-                    style={{
-                      width: 7,
-                      height: 7,
-                      borderRadius: 999,
-                      background: active ? color : 'var(--surface-3)',
-                      flexShrink: 0,
-                    }}
-                  />
-                  <span style={{ fontSize: 'var(--text-sm)', fontWeight: active ? 600 : 500, color: active ? color : 'var(--text-secondary)' }}>
-                    {TIER_COPY[t].label}
-                  </span>
-                  <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginLeft: 'auto', textAlign: 'right' }}>
-                    {active ? 'selected' : ''}
-                  </span>
+                  <span>{t}</span>
+                  {active && <span>● CURRENT TIER</span>}
                 </div>
               );
             })}
           </div>
         </div>
-
-        <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', lineHeight: 1.6, borderTop: '1px solid var(--border-subtle)', paddingTop: 'var(--sp-3)' }}>
-          This prototype does not expose an endpoint that applies a control to live traffic, so no action is
-          offered here. Analyst actions on stored incidents are supported by the API
-          (<span className="mono">POST /v2/incidents/{'{id}'}/action</span>).
-        </p>
       </div>
     </Card>
   );
 }
 
 function WhyFlagged({ result, evidence }: { result: SimulationReport; evidence: ReturnType<typeof deriveEvidence> }) {
+  const totalTx = result.run?.total_transactions ?? result.total_transactions ?? 0;
+  const abusiveTx = result.ground_truth?.abusive_transaction_count ?? result.abusive_transactions ?? 0;
+  const merchantId = result.run?.merchant_id ?? result.merchant_id ?? 'm_0001';
+  const windowEnd = result.run?.window_end ?? result.window_end ?? '';
+  const scenarioId = result.run?.scenario_id ?? result.scenario_id ?? '';
+
   return (
     <div style={{ display: 'grid', gap: 'var(--sp-5)' }}>
       <div>
-        <h3 style={{ fontSize: 'var(--text-lg)' }}>Why was this flagged?</h3>
+        <h3 style={{ fontSize: 'var(--text-lg)', fontWeight: 700 }}>Why was this flagged?</h3>
         <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', marginTop: 6 }}>
-          Each point below is measured from this window. Volume alone never decides the outcome.
+          Each point below is calculated from this window. Volume alone never decides the outcome.
         </p>
       </div>
 
       {evidence.length === 0 ? (
-        <EmptyState title="No evidence returned" detail="The response did not include feature values for this window." />
+        <EmptyState title="No evidence returned" description="The response did not include feature values for this window." />
       ) : (
         <div style={{ display: 'grid', gap: 'var(--sp-3)' }}>
           {evidence.map((item) => {
@@ -604,21 +761,21 @@ function WhyFlagged({ result, evidence }: { result: SimulationReport; evidence: 
         </div>
       )}
 
-      <Disclosure summary="Technical details — full narrative, feature ids and timestamps">
+      <Disclosure summary="Technical details — full forensic explanation, feature ids and timestamps">
         <div style={{ display: 'grid', gap: 'var(--sp-4)' }}>
           <div>
             <div className="eyebrow" style={{ marginBottom: 10 }}>
-              Forensic analysis narrative
+              Forensic evidence dossier
             </div>
             <NarrativeTypewriter text={result.explanation} />
           </div>
           <div className="veyra-kv">
-            <KV k="Merchant" v={result.merchant_id} mono />
-            <KV k="Window end (local)" v={formatTimestamp(result.window_end)} />
-            <KV k="Window end (UTC)" v={formatTimestampUtc(result.window_end)} mono />
-            <KV k="Scenario id" v={result.scenario_id} mono />
-            <KV k="Attempts in window" v={formatCount(result.total_transactions)} />
-            <KV k="Abusive attempts (generator truth)" v={formatCount(result.abusive_transactions)} />
+            <KV k="Merchant ID" v={merchantId} mono />
+            <KV k="Window end (local)" v={formatTimestamp(windowEnd)} />
+            <KV k="Window end (UTC)" v={formatTimestampUtc(windowEnd)} mono />
+            <KV k="Scenario ID" v={scenarioId} mono />
+            <KV k="Attempts in window" v={formatCount(totalTx)} />
+            <KV k="Abusive attempts (generator truth)" v={formatCount(abusiveTx)} />
           </div>
         </div>
       </Disclosure>
@@ -628,8 +785,10 @@ function WhyFlagged({ result, evidence }: { result: SimulationReport; evidence: 
 
 function EventsTab({ result }: { result: SimulationReport }) {
   const csv = result.export_formats?.csv;
+  const totalTx = result.run?.total_transactions ?? result.total_transactions ?? 0;
+
   if (!csv) {
-    return <EmptyState title="No transaction sample returned" detail="This response did not include a per-transaction breakdown." />;
+    return <EmptyState title="No transaction sample returned" description="This response did not include a per-transaction breakdown." />;
   }
   const lines = csv.trim().split('\n');
   const header = lines[0]?.split(',') ?? [];
@@ -638,23 +797,22 @@ function EventsTab({ result }: { result: SimulationReport }) {
   return (
     <div style={{ display: 'grid', gap: 'var(--sp-3)' }}>
       <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
-        Individual payment attempts in this window, as returned by the API. Showing the first {rows.length} of{' '}
-        {formatCount(result.total_transactions)}.
+        Individual synthetic payment attempts in this window. Showing the first {rows.length} of{' '}
+        {formatCount(totalTx)}. Use the <strong>Synthetic data explorer</strong> tab for full paged inspection.
       </p>
       <div style={{ overflowX: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--text-xs)' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--text-xs)', fontFamily: 'var(--font-mono)' }}>
           <thead>
             <tr>
               {header.map((h) => (
                 <th
                   key={h}
                   style={{
+                    padding: '8px 12px',
                     textAlign: 'left',
-                    padding: '9px 12px',
-                    background: 'var(--surface-2)',
-                    borderBottom: '1px solid var(--border)',
-                    color: 'var(--text-secondary)',
-                    fontWeight: 600,
+                    color: 'var(--text-muted)',
+                    borderBottom: '1px solid var(--border-subtle)',
+                    background: 'var(--surface-1)',
                     whiteSpace: 'nowrap',
                   }}
                 >
@@ -669,7 +827,6 @@ function EventsTab({ result }: { result: SimulationReport }) {
                 {cells.map((c, j) => (
                   <td
                     key={j}
-                    className="mono"
                     style={{
                       padding: '7px 12px',
                       borderBottom: '1px solid var(--border-subtle)',

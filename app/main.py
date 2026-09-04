@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -13,7 +14,25 @@ from app.core.config import get_settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup hooks
+    # Startup hooks.
+    #
+    # Warm the demo detector on a daemon thread rather than inline: fitting it takes
+    # ~30s (app/serving/demo_model_service.py), and blocking startup on that would make
+    # the whole API unavailable until it finished. Fired here so the model is usually
+    # ready before the first /v2/demo/simulate call; if a request does arrive first it
+    # simply waits on the same lock rather than training a second copy.
+    import contextlib
+    import threading
+
+    from app.serving.demo_model_service import get_demo_model_service
+
+    def _warm() -> None:
+        # A failed warm-up must not take the app down; the first request retries the fit.
+        with contextlib.suppress(Exception):
+            get_demo_model_service().ensure_trained()
+
+    threading.Thread(target=_warm, name="veyra-demo-model-warmup", daemon=True).start()
+
     yield
     # Shutdown hooks
 
@@ -27,8 +46,8 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    from app.api.middleware.security_headers import SecurityHeadersMiddleware
     from app.api.middleware.rate_limit import RateLimitAndBotProtectionMiddleware
+    from app.api.middleware.security_headers import SecurityHeadersMiddleware
 
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RateLimitAndBotProtectionMiddleware)
@@ -72,8 +91,8 @@ def create_app() -> FastAPI:
     app.include_router(v2_router)
 
     # Mount frontend static distribution if built
-    import os
     from pathlib import Path
+
     from fastapi.staticfiles import StaticFiles
 
     dist_dir = Path(__file__).resolve().parent.parent / "frontend" / "dist"

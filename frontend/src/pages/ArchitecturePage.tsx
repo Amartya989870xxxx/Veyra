@@ -179,14 +179,154 @@ export function ArchitecturePage() {
 
   return (
     <div className="container" style={{ padding: 'var(--sp-7) var(--sp-5) var(--sp-9)' }}>
-      <header style={{ display: 'grid', gap: 'var(--sp-3)', maxWidth: 760, marginBottom: 'var(--sp-6)' }}>
+      <header style={{ display: 'grid', gap: 'var(--sp-3)', maxWidth: 760, marginBottom: 'var(--sp-5)' }}>
         <SectionLabel>Architecture</SectionLabel>
-        <h1 style={{ fontSize: 'var(--text-2xl)' }}>How a transaction becomes a decision.</h1>
+        <h1 style={{ fontSize: 'var(--text-2xl)', fontWeight: 700 }}>How a transaction becomes a decision.</h1>
         <p style={{ fontSize: 'var(--text-md)', color: 'var(--text-secondary)', lineHeight: 1.65 }}>
           Ten stages, in the order they run. Select any one to see what it takes in, what it hands
           on, and the engineering tradeoff behind it.
         </p>
       </header>
+
+      {/* Technical Honesty: Three Scoring Paths */}
+      <div
+        style={{
+          background: 'var(--surface-1)',
+          border: '1px solid rgba(59, 130, 246, 0.25)',
+          borderRadius: 'var(--radius-md)',
+          padding: '16px 20px',
+          marginBottom: 'var(--sp-6)',
+          display: 'grid',
+          gap: 12,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <ShieldCheck size={16} color="var(--accent-bright)" />
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 700, letterSpacing: '0.05em', color: 'var(--accent-bright)', textTransform: 'uppercase' }}>
+            Technical Honesty: Three Distinct Scoring Paths
+          </span>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14, marginTop: 4 }}>
+          <div style={{ background: 'rgba(255, 255, 255, 0.02)', padding: 12, borderRadius: 6, border: '1px solid rgba(255, 255, 255, 0.05)' }}>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 700, color: 'var(--color-safe)' }}>
+              1. LIVE PRODUCTION PATH
+            </div>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>
+              POST /v2/score-window
+            </div>
+            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: 6, lineHeight: 1.5 }}>
+              Operates on persisted database events for a merchant, compares against 168-hour historical baselines, evaluates loss-minimizing thresholds, and persists alerts into the durable incident store (<code>app/serving/scoring_service.py</code>).
+            </p>
+          </div>
+
+          <div style={{ background: 'rgba(255, 255, 255, 0.02)', padding: 12, borderRadius: 6, border: '1px solid rgba(255, 255, 255, 0.05)' }}>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 700, color: 'var(--accent-bright)' }}>
+              2. DEMO MODEL-BACKED PATH
+            </div>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>
+              POST /v2/demo/simulate
+            </div>
+            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: 6, lineHeight: 1.5 }}>
+              Generates scenario traffic live, extracts features, and scores with a fitted <code>HistGradientBoostingClassifier</code> ensemble (<code>veyra_fusion_demo</code>). Holds results in a bounded in-memory store for synthetic inspection (<code>app/serving/demo_model_service.py</code>).
+            </p>
+          </div>
+
+          <div style={{ background: 'rgba(255, 255, 255, 0.02)', padding: 12, borderRadius: 6, border: '1px solid rgba(255, 255, 255, 0.05)' }}>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 700, color: 'var(--color-warning)' }}>
+              3. OFFLINE EVALUATION PATH
+            </div>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>
+              app/evaluation/
+            </div>
+            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: 6, lineHeight: 1.5 }}>
+              Batch evaluation harness over historical synthetic corpora. Measures ROC-AUC, PR-AUC, expected financial loss curves, and calibration across seed permutations without touching serving paths.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Demo execution trace: the 12 real, server-timed stages POST /v2/demo/simulate returns */}
+      <div
+        style={{
+          background: 'var(--surface-1)',
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 'var(--radius-md)',
+          padding: '16px 20px',
+          marginBottom: 'var(--sp-6)',
+          display: 'grid',
+          gap: 12,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <ArrowRight size={16} color="var(--accent-bright)" />
+          <span className="mono" style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.05em', color: 'var(--accent-bright)', textTransform: 'uppercase' }}>
+            Demo execution trace — 12 stages
+          </span>
+        </div>
+        <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.6, maxWidth: 720 }}>
+          Every <code>POST /v2/demo/simulate</code> call returns a <code>stages</code> array: real,
+          server-timed steps in the order they actually ran, each carrying a stable{' '}
+          <code>id</code>, its <code>sequence</code>, a <code>duration_ms</code> measured with{' '}
+          <code>time.perf_counter()</code>, and wall-clock <code>started_at</code>/<code>ended_at</code>{' '}
+          stamps. This is the request-level execution trace for one detection run — a finer
+          granularity than the ten module stages on the left, which describe the codebase, not one
+          call.
+        </p>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
+            <thead>
+              <tr>
+                {['#', 'Stage id', 'What it does'].map((h) => (
+                  <th
+                    key={h}
+                    className="eyebrow"
+                    style={{ textAlign: 'left', padding: '6px 12px 6px 0', borderBottom: '1px solid var(--border-subtle)', fontSize: '10px', color: 'var(--text-muted)' }}
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                ['generation', 'Generate an hour of organic synthetic traffic for a fresh merchant profile.'],
+                ['injection', 'Splice the chosen scenario recipe (attack or benign surge) into that traffic.'],
+                ['windowing', 'Slice the merged stream to the requested window (1m/5m/15m/1h), past-only.'],
+                ['baseline', 'Load the demo model and its frozen training-corpus baselines (cached after the first call).'],
+                ['features', 'Extract families A–I over the window with FeatureEngine.'],
+                ['graph', 'Build the bipartite entity graph and family-J concentration metrics.'],
+                ['deviation', 'Compute MAD deviation twins against the frozen baselines.'],
+                ['inference', 'Score model_features through the fitted VeyraFusionDetector.'],
+                ['policy', 'Map the score to OBSERVE / ALERT / REVIEW / RESTRICT via DecisionPolicy.'],
+                ['exposure', 'Estimate financial exposure from GMV, transaction count and the decided tier.'],
+                ['forensics', 'Generate the narrative, ranked deviations and entity-graph payload.'],
+                ['run_record', 'Store the run in the bounded in-memory run store for the Data Explorer.'],
+              ].map(([id, desc], i) => (
+                <tr key={id}>
+                  <td className="mono" style={{ padding: '7px 12px 7px 0', borderBottom: '1px solid var(--border-subtle)', fontSize: '11px', color: 'var(--text-muted)' }}>
+                    {String(i + 1).padStart(2, '0')}
+                  </td>
+                  <td className="mono" style={{ padding: '7px 12px 7px 0', borderBottom: '1px solid var(--border-subtle)', fontSize: '12px', color: 'var(--accent-bright)', whiteSpace: 'nowrap' }}>
+                    {id}
+                  </td>
+                  <td style={{ padding: '7px 0', borderBottom: '1px solid var(--border-subtle)', fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.55 }}>
+                    {desc}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.6, marginTop: 2 }}>
+          Each stage carries a <code>status</code> of <code>pending</code>, <code>running</code>,{' '}
+          <code>completed</code>, <code>failed</code> or <code>skipped</code>; a finished response
+          only ever contains <code>completed</code> (or <code>failed</code>, if a stage raised). The
+          <em> ground-truth label</em> for the chosen scenario is read only after stage 8 has already
+          produced a score — it populates the response's <code>ground_truth</code> block for
+          comparison and is never an input to <code>inference</code>.
+        </p>
+      </div>
 
       <div
         className="veyra-split"
@@ -372,6 +512,112 @@ export function ArchitecturePage() {
             )}
           </div>
         </Card>
+      </div>
+
+      {/* Scale Lab: a separate pipeline, benchmark-environment measurements, not production capacity */}
+      <div style={{ marginTop: 'var(--sp-7)', display: 'grid', gap: 'var(--sp-4)' }}>
+        <header style={{ display: 'grid', gap: 6, maxWidth: 760 }}>
+          <SectionLabel>Scale Lab</SectionLabel>
+          <h2 style={{ fontSize: 'var(--text-xl)', fontWeight: 700 }}>
+            A separate pipeline for one question: how does the system behave as workload grows?
+          </h2>
+          <p style={{ fontSize: 'var(--text-md)', color: 'var(--text-secondary)', lineHeight: 1.65 }}>
+            Scale Lab (<code>POST /v2/demo/benchmarks</code>) does not run the Detection pipeline
+            above at scale — it runs its own bounded, chunked benchmark against the real detector
+            and the real database, and reports what it actually measured. Numbers describe this
+            server, not a production deployment.
+          </p>
+        </header>
+
+        <Card style={{ display: 'grid', gap: 'var(--sp-4)' }}>
+          <div style={{ display: 'grid', gap: 'var(--sp-2)' }}>
+            <span className="eyebrow">Benchmark lifecycle</span>
+            <div style={{ display: 'grid', gap: 6 }}>
+              {[
+                ['Request validation', 'workload_size, duration_minutes, scenario_mix / fraud_ratio, benchmark_mode ("ingestion" or "pipeline") are validated; an experimental-tier request is refused outright if experimental benchmarks are disabled.'],
+                ['Guardrail resolution', 'The requested workload is capped to the configured hard ceiling before anything runs. POST returns immediately with a run_id — the benchmark itself runs on a background worker.'],
+                ['Chunked synthetic generation', 'Events are generated and persisted in bounded chunks (never the whole workload held in memory at once), split into legitimate and fraud traffic to match the requested mix.'],
+                ['Ingestion measurement', 'Each chunk is written to the real database; generation, validation and persistence timing accumulate into the ingestion figures.'],
+                ['Sampled computation (pipeline mode only)', 'A bounded sample of merchant-windows — not the whole workload — is run through feature extraction, entity graph construction and model inference, with per-window timing.'],
+                ['Resource measurement', 'Peak traced Python heap (tracemalloc) and database file growth are measured across the run.'],
+                ['Representative sampling', 'A bounded, reservoir-sampled set of legitimate, fraud and random transactions is retained as inspectable evidence — never the full generated workload.'],
+                ['Cleanup', 'Every row the benchmark wrote is deleted before the result is returned, so a benchmark never leaves synthetic volume behind in the database.'],
+                ['Result serialization', 'A structured result is written back to the run record, polled via progress and result endpoints until the run reaches a terminal status.'],
+              ].map(([step, desc], i) => (
+                <div
+                  key={step}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '26px 200px 1fr',
+                    gap: 'var(--sp-3)',
+                    alignItems: 'baseline',
+                    padding: '8px 0',
+                    borderBottom: i < 8 ? '1px solid var(--border-subtle)' : 'none',
+                  }}
+                >
+                  <span className="mono" style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                    {String(i + 1).padStart(2, '0')}
+                  </span>
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>{step}</span>
+                  <span style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>{desc}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Card>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 'var(--sp-4)' }}>
+          <Card style={{ display: 'grid', gap: 8 }}>
+            <span className="eyebrow" style={{ color: 'var(--accent-bright)' }}>Guardrails (configured)</span>
+            <div style={{ display: 'grid', gap: 6, fontSize: '13px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>Hard event ceiling</span>
+                <span className="mono" style={{ color: 'var(--text-primary)' }}>2,000,000</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>Wall-clock budget</span>
+                <span className="mono" style={{ color: 'var(--text-primary)' }}>120s</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>Chunk size</span>
+                <span className="mono" style={{ color: 'var(--text-primary)' }}>20,000 events</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>Sampled windows (pipeline mode)</span>
+                <span className="mono" style={{ color: 'var(--text-primary)' }}>150 max</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>Concurrent benchmarks</span>
+                <span className="mono" style={{ color: 'var(--text-primary)' }}>1</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>Representative samples / bucket</span>
+                <span className="mono" style={{ color: 'var(--text-primary)' }}>8</span>
+              </div>
+            </div>
+            <p style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.5, marginTop: 4 }}>
+              All configurable via <code>VEYRA_BENCHMARK_*</code> environment variables. A 100M
+              request is capped to the ceiling before generation starts, and the wall-clock budget
+              can stop it earlier still — a large request never freezes the server it runs on.
+            </p>
+          </Card>
+
+          <Card style={{ display: 'grid', gap: 8 }}>
+            <span className="eyebrow" style={{ color: 'var(--accent-bright)' }}>Completion statuses</span>
+            <div style={{ display: 'grid', gap: 6, fontSize: '12.5px' }}>
+              <div><code className="mono" style={{ color: 'var(--color-safe)' }}>completed</code> — the (possibly capped) target was fully processed.</div>
+              <div><code className="mono" style={{ color: 'var(--color-warning)' }}>stopped_early</code> — the wall-clock budget expired first; figures cover only what ran.</div>
+              <div><code className="mono" style={{ color: 'var(--accent-bright)' }}>capped</code> — the safety ceiling lowered the target, and that lowered target was reached.</div>
+              <div><code className="mono" style={{ color: 'var(--color-critical)' }}>failed</code> — the run raised an exception.</div>
+              <div><code className="mono" style={{ color: 'var(--color-critical)' }}>rejected</code> — refused before execution; nothing was generated.</div>
+            </div>
+            <p style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.5, marginTop: 4 }}>
+              Precedence when more than one applies: <code>failed &gt; stopped_early &gt; capped &gt; completed</code>.
+              A run that is both capped and cut off by the budget is reported <code>stopped_early</code>
+              — it never reads as a plain completion.
+            </p>
+          </Card>
+        </div>
       </div>
     </div>
   );

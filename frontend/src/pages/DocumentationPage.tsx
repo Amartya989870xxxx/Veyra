@@ -259,6 +259,88 @@ npm run dev`}</Code>
       ),
     },
     {
+      id: 'detection-pipeline',
+      title: 'Detection pipeline',
+      body: (
+        <LayeredSection
+          simpleTerms="Every scenario you run goes through the same 12 real steps, in the same order, and the site shows you exactly how long each one actually took on the server."
+          technicalDetails={
+            <>
+              <P>
+                <Inline>POST /v2/demo/simulate</Inline> returns a <Inline>stages</Inline> array — one
+                entry per real unit of server-side work, in execution order. Each entry carries a
+                stable <Inline>id</Inline>, a 1-based <Inline>sequence</Inline>, a{' '}
+                <Inline>status</Inline>, a <Inline>duration_ms</Inline> measured with{' '}
+                <Inline>time.perf_counter()</Inline> around that specific unit of work, and wall-clock{' '}
+                <Inline>started_at</Inline>/<Inline>ended_at</Inline> timestamps. Nothing here is
+                estimated: a stage that did not run does not appear.
+              </P>
+              <Code>{`generation → injection → windowing → baseline
+  → features → graph → deviation → inference
+  → policy → exposure → forensics → run_record`}</Code>
+              <P>
+                <strong>Stage status</strong> is one of <Inline>pending</Inline>,{' '}
+                <Inline>running</Inline>, <Inline>completed</Inline>, <Inline>failed</Inline> or{' '}
+                <Inline>skipped</Inline>. A finished response only ever contains{' '}
+                <Inline>completed</Inline> stages, or a <Inline>failed</Inline> one if something
+                raised — the other two states exist so a client can model the same 12-stage list
+                while a run is still in flight.
+              </P>
+              <P>
+                <strong>Timing semantics.</strong> Every duration in the response is genuine
+                backend processing time. The run also reports a <Inline>timing</Inline> block —{' '}
+                <Inline>server_processing_ms</Inline>, the measurement method, and an explicit{' '}
+                <Inline>includes_frontend_presentation_time: false</Inline> — so a client integrating
+                against this API never has to guess whether a number includes anything beyond
+                server work. A cold process pays a one-time model fit (visible as an outsized{' '}
+                <Inline>baseline</Inline> stage on the first call after startup); every call after
+                that completes in single-digit to low double-digit milliseconds.
+              </P>
+            </>
+          }
+        />
+      ),
+    },
+    {
+      id: 'synthetic-provenance',
+      title: 'Synthetic data & provenance',
+      body: (
+        <LayeredSection
+          simpleTerms="Everything you see in a demo run is generated fresh and clearly marked as synthetic. The scenario's own label (attack or benign) is shown for comparison, but it is never what produces the risk score — the score always comes from the model actually scoring the generated data."
+          technicalDetails={
+            <>
+              <P>
+                Every demo response carries a <Inline>provenance</Inline> block:
+              </P>
+              <Code>{`{
+  "data_source": "synthetic",
+  "generated_for": "demo_run",
+  "is_production_data": false,
+  "ground_truth_semantics": "..."
+}`}</Code>
+              <P>
+                <strong>Model output vs. synthetic ground truth.</strong>{' '}
+                <Inline>risk_score</Inline> is the output of{' '}
+                <Inline>DemoModelService.score()</Inline> — a real fitted{' '}
+                <Inline>VeyraFusionDetector</Inline> — run on the extracted feature vector.{' '}
+                <Inline>ground_truth.scenario_is_labelled_attack</Inline> is a separate field: the
+                synthetic generator's own label for the scenario you picked, read only{' '}
+                <em>after</em> scoring is complete, and used solely to populate that comparison
+                field and <Inline>model_matches_ground_truth</Inline>. It is structurally
+                impossible for the label to influence the score, because the code that computes{' '}
+                <Inline>risk_score</Inline> never reads it.
+              </P>
+              <P>
+                The demo model itself is trained on a synthetic corpus generated from a fixed
+                historical window that ends before any demo request's window begins, so a demo run
+                can never be scored by a model that was trained on that exact traffic.
+              </P>
+            </>
+          }
+        />
+      ),
+    },
+    {
       id: 'historical-baselines',
       title: 'Historical baselines',
       body: (
@@ -382,8 +464,18 @@ npm run dev`}</Code>
                 rows={[
                   { method: 'GET', path: '/health', note: 'Liveness and environment status.' },
                   { method: 'GET', path: '/v2/demo/scenarios', note: 'List all supported attack and benign surge scenarios.' },
-                  { method: 'POST', path: '/v2/demo/simulate', note: 'Execute and score a scenario window with full evidence payload.' },
-                  { method: 'POST', path: '/v2/demo/stress-test', note: 'Inject burst traffic and measure ingestion & inference latency.' },
+                  { method: 'POST', path: '/v2/demo/simulate', note: 'Generate, score and store one demo run: full 12-stage trace, verdict and forensic evidence.' },
+                  { method: 'POST', path: '/v2/demo/stress-test', note: 'Small fixed-size burst probe, timed server-side.' },
+                  { method: 'GET', path: '/v2/demo/runs/{run_id}', note: 'Metadata, entity graph and links for one stored demo run.' },
+                  { method: 'GET', path: '/v2/demo/runs/{run_id}/transactions', note: 'Paginated synthetic transactions behind a run (page_size capped at 200).' },
+                  { method: 'GET', path: '/v2/demo/runs/{run_id}/features', note: 'Full feature vector for a run, grouped by family, with baseline deviations.' },
+                  { method: 'GET', path: '/v2/demo/runs/{run_id}/summary', note: 'Composition, time range and entity counts for a run.' },
+                  { method: 'GET', path: '/v2/demo/runs/{run_id}/entities', note: 'Entity topology metrics: counts, ratios, cluster concentration, bipartite Gini.' },
+                  { method: 'GET', path: '/v2/demo/benchmarks/presets', note: 'Workload presets, tiers, configured guardrails.' },
+                  { method: 'POST', path: '/v2/demo/benchmarks', note: 'Queue a Scale Lab benchmark; returns immediately with a run_id.' },
+                  { method: 'GET', path: '/v2/demo/benchmarks/{run_id}/progress', note: 'Cheap polling target for an in-flight benchmark.' },
+                  { method: 'GET', path: '/v2/demo/benchmarks/{run_id}', note: 'Full benchmark run, including the result once terminal.' },
+                  { method: 'GET', path: '/v2/demo/benchmarks', note: 'Recent benchmark runs held in the bounded registry.' },
                   { method: 'POST', path: '/v2/score-window', note: 'Score a merchant-window on ingested live stream.' },
                   { method: 'GET', path: '/v2/incidents', note: 'Query stored incidents filtered by merchant and status.' },
                   { method: 'GET', path: '/v2/incidents/{id}', note: 'Retrieve incident dossier with full entity graph.' },
@@ -401,6 +493,169 @@ npm run dev`}</Code>
     "window_size": "5m",
     "seed": 42
   }'`}</Code>
+            </>
+          }
+        />
+      ),
+    },
+    {
+      id: 'data-explorer',
+      title: 'Synthetic Data Explorer',
+      body: (
+        <LayeredSection
+          simpleTerms="Every demo run keeps its underlying synthetic transactions, features and entity graph available for a short while, so you can check exactly what data produced a verdict — not just the final number."
+          technicalDetails={
+            <>
+              <P>
+                Runs are held in a <strong>bounded, in-memory, per-process store</strong> — never
+                written to disk or the operational database. At most 20 recent runs are retained,
+                each expiring after 30 minutes, evicted oldest-first. A run belonging to another
+                principal reads as <Inline>404</Inline>, never <Inline>403</Inline>, so a{' '}
+                <Inline>run_id</Inline> cannot be used to probe another principal's activity.
+              </P>
+              <P>
+                <Inline>GET /v2/demo/runs/&#123;run_id&#125;/transactions</Inline> pages the exact
+                synthetic transactions behind a run: <Inline>?page=1&amp;page_size=50</Inline>,
+                capped at a hard maximum of <strong>200</strong> per page — a larger request is
+                rejected, not silently truncated. Every row carries a synthetic ground-truth flag
+                and never a raw card number: Veyra rejects PAN-shaped identifiers at ingest, so
+                there is nothing of that shape to redact here.
+              </P>
+              <P>
+                <Inline>GET /v2/demo/runs/&#123;run_id&#125;/features</Inline> returns the full
+                feature vector grouped by family, with each baseline-deviation twin attached to the
+                raw feature it belongs to. <Inline>GET /v2/demo/runs/&#123;run_id&#125;/summary</Inline>{' '}
+                returns composition (legitimate vs. abusive counts), time range and entity counts.
+              </P>
+              <P>
+                <strong>Entity topology.</strong>{' '}
+                <Inline>GET /v2/demo/runs/&#123;run_id&#125;/entities</Inline> reports customer,
+                device, instrument and IP counts for the run, derived ratios (
+                <Inline>instruments_per_customer</Inline>, <Inline>transactions_per_device</Inline>
+                ), and the two Family-J concentration metrics computed by the entity graph engine:{' '}
+                <Inline>largest_cluster_volume_share</Inline> and <Inline>bipartite_gini</Inline>.
+                Every number is read directly off the run's own feature vector — the explorer cannot
+                disagree with the verdict it explains.
+              </P>
+            </>
+          }
+        />
+      ),
+    },
+    {
+      id: 'scale-lab',
+      title: 'Scale Lab',
+      body: (
+        <LayeredSection
+          simpleTerms="The Scale Lab runs a real, bounded stress test against the system — generating and processing tens of thousands to millions of synthetic events — and reports exactly what happened, including when a run stops early or gets capped for safety."
+          technicalDetails={
+            <>
+              <P>
+                <Inline>POST /v2/demo/benchmarks</Inline> accepts a <Inline>workload_size</Inline>{' '}
+                (1,000 to 100,000,000), a <Inline>duration_minutes</Inline> span, a{' '}
+                <Inline>scenario_mix</Inline> or explicit <Inline>fraud_ratio</Inline>, and a{' '}
+                <Inline>benchmark_mode</Inline> of <Inline>ingestion</Inline> (write-scale only) or{' '}
+                <Inline>pipeline</Inline> (write-scale plus a sampled detection pass). It returns{' '}
+                <strong>immediately</strong> with a <Inline>run_id</Inline> — a benchmark runs on a
+                background worker so the caller never holds a connection open for a
+                multi-hundred-thousand-event run. Poll{' '}
+                <Inline>GET /v2/demo/benchmarks/&#123;run_id&#125;/progress</Inline> for a cheap
+                status/stage snapshot, and{' '}
+                <Inline>GET /v2/demo/benchmarks/&#123;run_id&#125;</Inline> for the full result once
+                terminal.
+              </P>
+              <P>
+                <strong>Completion statuses.</strong> A run reports exactly one of:
+              </P>
+              <div style={{ display: 'grid', gap: 6 }}>
+                {[
+                  ['completed', '#10b981', 'The (possibly capped) target was fully processed.'],
+                  ['stopped_early', '#f59e0b', 'The wall-clock budget expired first — figures cover only the events that actually ran, never scaled up to the target.'],
+                  ['capped', '#3b82f6', 'The safety ceiling lowered the target below what was requested, and that lowered target was reached.'],
+                  ['failed', '#f93f28', 'The run raised an exception; error carries the detail.'],
+                  ['rejected', '#f93f28', 'Refused before execution — nothing was generated. Currently the path for an experimental-tier (>10M) request when experimental benchmarks are disabled.'],
+                ].map(([status, color, desc]) => (
+                  <div
+                    key={status}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '130px 1fr',
+                      gap: 'var(--sp-3)',
+                      padding: '8px 12px',
+                      background: '#040711',
+                      border: '1px solid var(--border-subtle)',
+                      borderRadius: 'var(--radius-sm)',
+                    }}
+                  >
+                    <span className="mono" style={{ fontSize: '12px', fontWeight: 700, color: color as string }}>
+                      {status}
+                    </span>
+                    <span style={{ fontSize: '13px', color: '#cbd5e1', lineHeight: 1.6 }}>{desc}</span>
+                  </div>
+                ))}
+              </div>
+              <P>
+                Precedence when more than one condition applies:{' '}
+                <Inline>failed &gt; stopped_early &gt; capped &gt; completed</Inline>. A run that is
+                both capped by the ceiling and then cut off by the wall-clock budget is reported{' '}
+                <Inline>stopped_early</Inline> — it is never described as a successful completion.
+                When set, <Inline>stop_reason</Inline> is currently always{' '}
+                <Inline>wall_clock_budget_exceeded</Inline>; three further values (
+                <Inline>safety_ceiling_reached</Inline>, <Inline>persistence_unavailable</Inline>,{' '}
+                <Inline>internal_error</Inline>) are reserved in the schema for guardrail paths the
+                current runner does not yet exercise.
+              </P>
+              <P>
+                <strong>Result structure.</strong> <Inline>result</Inline> is nested by concern, and
+                every group states its own unit:
+              </P>
+              <Code>{`result.traffic       requested / generated / processed events,
+                      measured legitimate/fraud counts, actual_fraud_ratio
+result.ingestion     events_persisted, write_duration_ms,
+                      events_per_second   ← write throughput, NOT latency
+result.computation   sampled_windows, per_window_latency_ms
+                      ← cost per merchant-window, NOT per transaction
+                      (null in ingestion mode)
+result.memory        peak_traced_python_heap_mb
+                      ← tracemalloc heap, NOT process RSS
+result.storage       storage_delta_mb  ← SQLite file growth
+result.samples       bounded legitimate / fraud / random
+                      transaction samples (reservoir-sampled)
+result.environment   database, python, platform, cpu_count
+result.limitations   plain-language notes on capping,
+                      early stops, or unreachable traffic mixes`}</Code>
+              <P>
+                <strong>Traffic composition is measured, not assumed.</strong>{' '}
+                <Inline>traffic.legitimate_events</Inline> and <Inline>traffic.fraud_events</Inline>{' '}
+                are counted from each generated transaction's own label; if a run stops early, those
+                counts cover only the events that actually generated — nothing is scaled up to the
+                request.
+              </P>
+              <P>
+                <strong>Representative samples.</strong> A result carries a bounded set of
+                transactions (8 per bucket by default) drawn by reservoir sampling across the whole
+                run rather than "the first N generated" — which would only show the opening moments
+                of one merchant's traffic. The full generated workload is never returned.
+              </P>
+              <P>
+                <strong>Guardrails.</strong> <Inline>GET /v2/demo/benchmarks/presets</Inline> reports
+                this server's configured ceilings directly, so a client never has to hardcode them:
+              </P>
+              <Code>{`hard_cap_events        2,000,000   events/run, absolute ceiling
+max_seconds            120         wall-clock budget/run
+chunk_size             20,000      events generated & persisted per chunk
+max_sample_windows     150         merchant-windows sampled in pipeline mode
+sample_rows_per_bucket 8           representative transactions per bucket
+concurrent_jobs        1           benchmarks run one at a time
+allow_experimental     true/false  gates >10M workloads (HTTP 403 when false)`}</Code>
+              <P>
+                Events are generated and persisted in bounded chunks — never materialized as one
+                Python list — so a workload well beyond the ceiling cannot exhaust memory even
+                before the ceiling engages. Every workload preset is classified by tier:{' '}
+                <strong>safe</strong> (100K–1M), <strong>extended</strong> (10M), or{' '}
+                <strong>experimental</strong> (100M) — and every run's rows are deleted from the
+                database before the result is returned.
+              </P>
             </>
           }
         />
@@ -466,7 +721,9 @@ npm run dev`}</Code>
                 <li>All evaluation figures derive from controlled synthetic data generators; no live bank production records were analyzed.</li>
                 <li>Entity graphs are constructed per temporal window; syndicates spreading transactions over days without shared window presence require multi-window graph stitching.</li>
                 <li>Baselines require historical depth; newly onboarded merchants fall back to category medians with lower confidence ratings.</li>
-                <li>Benchmark throughput reflects local execution against SQLite/async engines rather than distributed cloud infrastructure.</li>
+                <li>Scale Lab throughput reflects local execution against SQLite on this server, not distributed cloud infrastructure — the results describe this environment, not production capacity.</li>
+                <li>At the default 120-second wall-clock budget, workloads at or above roughly 500K events typically report <Inline>stopped_early</Inline> rather than <Inline>completed</Inline> on this machine; the figures returned are honest for the events that actually ran.</li>
+                <li>The demo scoring model is intentionally small — trained on one merchant profile over one week, so a browser click does not wait minutes for a fit — and does not carry the statistical power of the offline evaluation harness in <Inline>scripts/run_experiment.py</Inline>. Demo verdicts illustrate the pipeline; published benchmark numbers are the evaluation to cite.</li>
                 <li>Veyra provides decision recommendations; automated payment blocking must be configured and governed by merchant risk policies.</li>
                 <li>Veyra holds no formal PCI-DSS, SOC 2, or card network certification.</li>
               </ul>

@@ -158,3 +158,28 @@ export function riskLabel(tier: string): string {
       return 'Unknown';
   }
 }
+
+export function humanizeControl(control: string | null | undefined): string {
+  if (!control) return 'No defensive friction needed';
+  return control
+    .replace(/^RECOMMEND_/, '')
+    .replace(/_/g, ' ')
+    .toLowerCase()
+    .replace(/^\w/, (c) => c.toUpperCase());
+}
+
+export function windowLabel(windowSize: string): string {
+  switch (windowSize) {
+    case '1m':
+      return '1 minute';
+    case '5m':
+      return '5 minutes';
+    case '15m':
+      return '15 minutes';
+    case '1h':
+      return '1 hour';
+    default:
+      return windowSize;
+  }
+}
+

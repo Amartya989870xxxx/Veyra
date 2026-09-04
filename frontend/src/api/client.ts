@@ -2,19 +2,27 @@
  *
  * Every backend call in the app goes through here. No component issues its own
  * fetch, and there is no mock/offline path that fabricates a successful result —
- * a failed call surfaces as an ApiError and the UI renders an error state. The
- * previous frontend fell back to `handleMockSimulation()` on failure, which made
- * a dead backend look like a working detection.
+ * a failed call surfaces as an ApiError and the UI renders an error state.
  */
 
 import {
   ApiError,
   type BaselinesResponse,
+  type BenchmarkCreateRequest,
+  type BenchmarkCreateResponse,
+  type BenchmarkListResponse,
+  type BenchmarkPresetsResponse,
+  type BenchmarkProgressResponse,
+  type BenchmarkRun,
+  type EntitySummary,
+  type FeatureSummary,
   type HealthResponse,
   type IncidentActionRequest,
   type IncidentActionResponse,
   type IncidentDetail,
   type IncidentSummary,
+  type RunDetail,
+  type RunSummary,
   type ScenarioSummary,
   type ScoreWindowRequest,
   type ScoreWindowResponse,
@@ -22,6 +30,7 @@ import {
   type SimulationReport,
   type StressTestRequest,
   type StressTestResult,
+  type TransactionPage,
 } from './types';
 
 /** Public configuration only. Never put a credential in a VITE_ variable —
@@ -46,7 +55,7 @@ interface RequestOptions {
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, signal, timeoutMs = 120_000 } = opts;
 
-  // Stress tests and simulations are genuinely slow; an unbounded fetch that
+  // Stress tests, benchmarks and simulations can take time; an unbounded fetch that
   // never resolves is worse than a clear timeout error.
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -118,6 +127,54 @@ export const api = {
   scoreWindow: (payload: ScoreWindowRequest, signal?: AbortSignal) =>
     request<ScoreWindowResponse>('/v2/score-window', { method: 'POST', body: payload, signal }),
 
+  // ---------------- Demo Run / Synthetic Data Explorer ----------------
+  getRun: (runId: string, signal?: AbortSignal) =>
+    request<RunDetail>(`/v2/demo/runs/${encodeURIComponent(runId)}`, { signal }),
+
+  getRunTransactions: (
+    runId: string,
+    page: number = 1,
+    pageSize: number = 50,
+    signal?: AbortSignal,
+  ) =>
+    request<TransactionPage>(
+      `/v2/demo/runs/${encodeURIComponent(runId)}/transactions?page=${page}&page_size=${pageSize}`,
+      { signal },
+    ),
+
+  getRunFeatures: (runId: string, signal?: AbortSignal) =>
+    request<FeatureSummary>(`/v2/demo/runs/${encodeURIComponent(runId)}/features`, { signal }),
+
+  getRunSummary: (runId: string, signal?: AbortSignal) =>
+    request<RunSummary>(`/v2/demo/runs/${encodeURIComponent(runId)}/summary`, { signal }),
+
+  getRunEntities: (runId: string, signal?: AbortSignal) =>
+    request<EntitySummary>(`/v2/demo/runs/${encodeURIComponent(runId)}/entities`, { signal }),
+
+  // ---------------- Workload Scaling Benchmarks ----------------
+  getBenchmarkPresets: (signal?: AbortSignal) =>
+    request<BenchmarkPresetsResponse>('/v2/demo/benchmarks/presets', { signal }),
+
+  createBenchmark: (payload: BenchmarkCreateRequest, signal?: AbortSignal) =>
+    request<BenchmarkCreateResponse>('/v2/demo/benchmarks', {
+      method: 'POST',
+      body: payload,
+      signal,
+    }),
+
+  getBenchmarkProgress: (runId: string, signal?: AbortSignal) =>
+    request<BenchmarkProgressResponse>(
+      `/v2/demo/benchmarks/${encodeURIComponent(runId)}/progress`,
+      { signal },
+    ),
+
+  getBenchmark: (runId: string, signal?: AbortSignal) =>
+    request<BenchmarkRun>(`/v2/demo/benchmarks/${encodeURIComponent(runId)}`, { signal }),
+
+  listBenchmarks: (signal?: AbortSignal) =>
+    request<BenchmarkListResponse>('/v2/demo/benchmarks', { signal }),
+
+  // ---------------- Production Incidents & Baselines ----------------
   listIncidents: (
     params: { merchant_id?: string; status?: string; limit?: number } = {},
     signal?: AbortSignal,

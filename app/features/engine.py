@@ -9,9 +9,10 @@ Coordinates:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import time
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Sequence
 
 from app.features.aggregator import WindowAgg, compute_window_features_dict
 from app.features.baselines import BaselineEngine
@@ -54,7 +55,19 @@ class FeatureEngine:
         transactions: Sequence[AnnotatedTransaction | PaymentAttempt],
         preceding_rate: float = 0.0,
         cross_merchant_entity_map: dict[str, set[str]] | None = None,
+        on_stage: Callable[[str, float], None] | None = None,
     ) -> WindowFeatureVector:
+        """Compute the full feature vector for one merchant-window.
+
+        ``on_stage`` is an optional callback invoked as ``on_stage(stage_id, duration_ms)``
+        after each of the three measurable internal phases (``"statistical_features"``,
+        ``"entity_graph"``, ``"baseline_deviation"``). It exists purely for callers that
+        need real, per-substage server-side timing (the demo pipeline trace and the
+        computation-scale benchmark, Parts 1B/3C) without duplicating this method's logic
+        or computing anything twice. It changes no behaviour when omitted, which is why
+        every existing caller passes nothing.
+        """
+        t0 = time.perf_counter()
         # 1. Aggregate statistical features for Families A-I
         agg = WindowAgg(
             merchant_id=merchant_id,
@@ -64,18 +77,24 @@ class FeatureEngine:
             preceding_window_txn_rate=preceding_rate,
         )
         raw_stats = compute_window_features_dict(agg)
+        if on_stage:
+            on_stage("statistical_features", (time.perf_counter() - t0) * 1000.0)
 
         # 2. Extract Family J graph features
+        t1 = time.perf_counter()
         graph_res = self.graph_engine.compute_window_graph_features(
             transactions=transactions,
             cross_merchant_entity_map=cross_merchant_entity_map,
         )
         graph_stats = graph_res.to_dict()
+        if on_stage:
+            on_stage("entity_graph", (time.perf_counter() - t1) * 1000.0)
 
         # Combine all base features
         base_features: dict[str, float] = {**raw_stats, **graph_stats}
 
         # 3. Compute deviation twins for declared features
+        t2 = time.perf_counter()
         how = window_end.weekday() * 24 + window_end.hour
         deviation_twins: dict[str, float] = {}
         confidences: list[BaselineConfidence] = []
@@ -97,6 +116,8 @@ class FeatureEngine:
                 confidences.append(conf)
 
         all_features = {**base_features, **deviation_twins}
+        if on_stage:
+            on_stage("baseline_deviation", (time.perf_counter() - t2) * 1000.0)
 
         # 4. Filter model inputs vs evidence-only vs downstream-only
         model_features: dict[str, float] = {}
