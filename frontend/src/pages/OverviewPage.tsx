@@ -26,18 +26,24 @@ const HeroNetworkCanvas = lazy(() =>
   import('../components/viz/HeroNetworkCanvas').then((m) => ({ default: m.HeroNetworkCanvas })),
 );
 
+/** The final, permanent Veyra product walkthrough video: https://youtu.be/ldEY9BxSoCs
+ *
+ * Hardcoded so the walkthrough works in every environment — local dev, preview and
+ * production — with zero required deployment configuration. `VITE_WALKTHROUGH_VIDEO_ID`
+ * (see `frontend/.env.example`) remains a supported override for swapping the video
+ * without a code change, but Vercel needs no environment variable set for this to work.
+ */
+const CANONICAL_WALKTHROUGH_VIDEO_ID = 'ldEY9BxSoCs';
+const WALKTHROUGH_VIDEO_ID: string =
+  (import.meta.env.VITE_WALKTHROUGH_VIDEO_ID as string | undefined)?.trim() ||
+  CANONICAL_WALKTHROUGH_VIDEO_ID;
+
 interface OverviewPageProps {
   onNavigate: (route: RouteId) => void;
   onRunScenario: (scenarioId: string) => void;
 }
 
 export function OverviewPage({ onNavigate, onRunScenario }: OverviewPageProps) {
-  // Video showcase state
-  const [videoId, setVideoId] = useState<string>('dQw4w9WgXcQ');
-  const [showVideoInput, setShowVideoInput] = useState<boolean>(false);
-  const [videoInputVal, setVideoInputVal] = useState<string>('');
-  const [isPlaying, setIsPlaying] = useState<boolean>(false);
-
   // "Same spike. Different conclusion." interactive scenario toggle
   const [activeStory, setActiveStory] = useState<'flash_sale' | 'card_testing'>('flash_sale');
 
@@ -46,20 +52,6 @@ export function OverviewPage({ onNavigate, onRunScenario }: OverviewPageProps) {
 
   // FAQ accordion state
   const [openFaq, setOpenFaq] = useState<number | null>(0);
-
-  const handleUpdateVideo = () => {
-    if (!videoInputVal.trim()) return;
-    const match = videoInputVal.match(
-      /(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/,
-    );
-    if (match && match[1]) {
-      setVideoId(match[1]);
-    } else {
-      setVideoId(videoInputVal.trim());
-    }
-    setShowVideoInput(false);
-    setIsPlaying(true);
-  };
 
   const audienceTabs = [
     {
@@ -918,77 +910,31 @@ export function OverviewPage({ onNavigate, onRunScenario }: OverviewPageProps) {
                   </span>
                 </div>
 
-                <div>
-                  {!showVideoInput ? (
-                    <button
-                      onClick={() => setShowVideoInput(true)}
-                      style={{
-                        background: 'rgba(255, 255, 255, 0.05)',
-                        border: '1px solid rgba(255, 255, 255, 0.08)',
-                        color: '#94a3b8',
-                        padding: '4px 10px',
-                        borderRadius: '4px',
-                        fontSize: '11px',
-                        fontFamily: 'var(--font-mono)',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      <Video size={12} /> Set Video ID ⚙
-                    </button>
-                  ) : (
-                    <div style={{ display: 'flex', gap: '6px' }}>
-                      <input
-                        type="text"
-                        placeholder="Paste YouTube ID or URL"
-                        value={videoInputVal}
-                        onChange={(e) => setVideoInputVal(e.target.value)}
-                        style={{
-                          background: '#000000',
-                          border: '1px solid #3b82f6',
-                          color: '#ffffff',
-                          padding: '3px 8px',
-                          borderRadius: '4px',
-                          fontSize: '11px',
-                          width: '180px',
-                          fontFamily: 'var(--font-mono)',
-                        }}
-                      />
-                      <button
-                        onClick={handleUpdateVideo}
-                        style={{
-                          background: '#f93f28',
-                          border: 'none',
-                          color: '#ffffff',
-                          padding: '3px 8px',
-                          borderRadius: '4px',
-                          fontSize: '11px',
-                          fontWeight: 700,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        Save
-                      </button>
-                      <button
-                        onClick={() => setShowVideoInput(false)}
-                        style={{
-                          background: 'transparent',
-                          border: 'none',
-                          color: '#64748b',
-                          fontSize: '11px',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  )}
-                </div>
+                <a
+                  href={`https://youtu.be/${WALKTHROUGH_VIDEO_ID}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    color: '#94a3b8',
+                    padding: '4px 10px',
+                    borderRadius: '4px',
+                    fontSize: '11px',
+                    fontFamily: 'var(--font-mono)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    textDecoration: 'none',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <Video size={12} /> Watch on YouTube ↗
+                </a>
               </div>
 
-              {/* 16:9 Video Container */}
+              {/* 16:9 Video Container — responsive at every breakpoint via the
+                  padding-bottom aspect-ratio trick, iframe absolutely filling it. */}
               <div
                 style={{
                   position: 'relative',
@@ -999,10 +945,11 @@ export function OverviewPage({ onNavigate, onRunScenario }: OverviewPageProps) {
                 }}
               >
                 <iframe
-                  src={`https://www.youtube.com/embed/${videoId}?autoplay=${isPlaying ? 1 : 0}&rel=0`}
+                  src={`https://www.youtube-nocookie.com/embed/${WALKTHROUGH_VIDEO_ID}?rel=0`}
                   title="Veyra System Walkthrough"
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                   allowFullScreen
+                  loading="lazy"
                   style={{
                     position: 'absolute',
                     top: 0,
